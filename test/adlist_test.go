@@ -1,0 +1,40 @@
+package test
+
+import (
+	"redigo/src"
+	"fmt"
+)
+
+
+type data struct{
+	name string
+	age int
+}
+
+func test() {
+	list := src.ListCreate()
+	for i:=0;i<10;i++ {
+		d := data{
+			"tong",
+			i,
+		}
+		list.ListAddNodeTail(d)
+	}
+	iter := list.ListGetIterator(src.ITERATION_DIRECTION_INORDER)
+	node := iter.ListNext()
+	for node!=nil {
+		fmt.Println(node.ListNodeValue())
+		node = iter.ListNext()
+	}
+
+	cpList := src.ListDup(list)
+	iter2 := cpList.ListGetIterator(src.ITERATION_DIRECTION_INORDER)
+	node2 := iter2.ListNext()
+	for node2!=nil {
+		fmt.Println(node2.ListNodeValue())
+		node2 = iter2.ListNext()
+	}
+}
+
+
+
