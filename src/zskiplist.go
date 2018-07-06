@@ -42,7 +42,7 @@ type ZLexRangeSpec struct {
  * scores, reinserting the same element should never happen since the
  * caller of zslInsert() should test in the hash table if the element is
  * already inside or not. */
-/* ZSkiplist methods */
+/* -------------------------- ZSkiplist methods -------------------------- */
 func (zsl *ZSkiplist) ZSkiplistInsert(score float64, ele string) *ZSkiplistNode{
 	update := [ZSKIPLIST_MAXLEVEL]*ZSkiplistNode{}
 	rank := [ZSKIPLIST_MAXLEVEL]int{}
@@ -166,14 +166,130 @@ func (zsl *ZSkiplist) ZSkiplistIsInRange(rangeSpec *ZScoreRangeSpec) bool{
 	return true
 }
 
+
+/* Find the first node that is contained in the specified range.
+ * Returns NULL when no element is contained in the range. */
 func (zsl *ZSkiplist) ZSkiplistFirstInRange(rangeSpec *ZScoreRangeSpec) *ZSkiplistNode {
 	if !zsl.ZSkiplistIsInRange(rangeSpec) {
 		return nil
 	}
-
+	x := zsl.header
+	for i:=zsl.level-1;i>=0;i-- {
+		// go forward until *OUT* of range
+		for x.level[i].forward !=nil && !ZSkiplistValueGteMin(x.level[i].forward.score, rangeSpec) {
+			x = x.level[i].forward
+		}
+	}
+	x = x.level[0].forward
+	// check if score <= max
+	if x == nil || !ZSkiplistValueLteMax(x.score, rangeSpec) {
+		return nil
+	}
+	return x
 }
 
-/* ZSkiplistNode functions */
+/* Find the last node that is contained in the specified range.
+ * Returns NULL when no element is contained in the range. */
+func (zsl *ZSkiplist) ZSkiplistLastInRange(rangeSpec *ZScoreRangeSpec) *ZSkiplistNode {
+	if !zsl.ZSkiplistIsInRange(rangeSpec) {
+		return nil
+	}
+	x := zsl.header
+	for i:=zsl.level-1;i>=0;i-- {
+		// go forward while *IN* range
+		for x.level[i].forward !=nil && ZSkiplistValueLteMax(x.level[i].forward.score, rangeSpec) {
+			x = x.level[i].forward
+		}
+	}
+	// check if score >= min
+	if x == nil || !ZSkiplistValueGteMin(x.score, rangeSpec) {
+		return nil
+	}
+	return x
+}
+
+
+/* Delete all the elements with score between min and max from the skiplist.
+ * Min and max are inclusive, so a score >= min || score <= max is deleted.
+ * Note that this function takes the reference to the hash table view of the
+ * sorted set, in order to remove the elements from the hash table too. */
+func (zsl *ZSkiplist) ZSkiplistDeleteRangeByScore(rangeSpec *ZScoreRangeSpec, dict map[string]*ZSkiplistNode) int{
+	update := [ZSKIPLIST_MAXLEVEL]*ZSkiplistNode{}
+	x := zsl.header
+	removed := 0
+	for i:=zsl.level-1;i>=0;i-- {
+		lteMin := x.level[i].forward.score < rangeSpec.min
+		if !lteMin { // (!lteMin) ==> (score >= min), check if score == min is admitted
+			lteMin = rangeSpec.minex && x.level[i].forward.score == rangeSpec.min
+		}
+
+		for x.level[i].forward != nil && lteMin {
+			x = x.level[i].forward
+		}
+		update[i] = x
+	}
+	// current node is the last with score < or <= min
+
+	x = x.level[0].forward
+
+	//delete while in range
+	if rangeSpec.maxex { // exclude max
+		for x != nil && x.score < rangeSpec.max {
+			next := x.level[0].forward
+			zsl.zSkiplistDeleteNode(x, update)
+			delete(dict, x.ele)
+			removed++
+			x = next
+		}
+	} else { // not exclude max
+		for x != nil && x.score <= rangeSpec.max {
+			next := x.level[0].forward
+			zsl.zSkiplistDeleteNode(x, update)
+			delete(dict, x.ele)
+			removed++
+			x = next
+		}
+	}
+
+	return removed
+}
+
+func (zsl *ZSkiplist) ZSkiplistDeleteRangeByLex(rangeSpec *ZLexRangeSpec, dict map[string]*ZSkiplistNode) int {
+	update := [ZSKIPLIST_MAXLEVEL]*ZSkiplistNode{}
+	x := zsl.header
+	removed := 0
+	for i:=zsl.level-1;i>=0;i-- {
+		for x.level[i].forward != nil && !ZSkiplistLexValueGteMin(x.level[i].forward.ele, rangeSpec) {
+			x = x.level[i].forward
+		}
+		update[i] = x
+	}
+	// current node is the last with ele.value < or <= min
+
+	x = x.level[0].forward
+
+	// delete nodes while in range
+	for x!=nil && ZSkiplistLexValueLteMax(x.ele, rangeSpec) {
+		next := x.level[0].forward
+		zsl.zSkiplistDeleteNode(x, update)
+		delete(dict, x.ele)
+		removed++
+		x = next
+	}
+	return removed
+}
+
+
+
+
+
+
+
+
+
+
+
+/* -------------------------- ZSkiplistNode functions -------------------------- */
 func ZSkiplistCreateNode(level int, score float64, ele string) *ZSkiplistNode{
 	zn := ZSkiplistNode{
 		ele,
@@ -184,7 +300,7 @@ func ZSkiplistCreateNode(level int, score float64, ele string) *ZSkiplistNode{
 	return &zn
 }
 
-/* ZSkiplist functions */
+/* -------------------------- ZSkiplist functions -------------------------- */
 func ZSkiplistCreate() *ZSkiplist {
 	zsl := ZSkiplist{}
 	zsl.level = 1
@@ -211,7 +327,7 @@ func ZSkiplistRandomLevel() int{
 	}
 }
 
-// value greater than (exclusive)
+// value greater than (exclusively) min
 func ZSkiplistValueGteMin(value float64, rangeSpec *ZScoreRangeSpec) bool{
 	if rangeSpec.minex { // exclude min
 		return value > rangeSpec.min
@@ -220,11 +336,27 @@ func ZSkiplistValueGteMin(value float64, rangeSpec *ZScoreRangeSpec) bool{
 	}
 }
 
-// value less than max (exclusive)
+// value less than max (exclusively) max
 func ZSkiplistValueLteMax(value float64, rangeSpec *ZScoreRangeSpec) bool {
 	if rangeSpec.maxex { // exclude max
 		return value < rangeSpec.max
 	} else { // include max
 		return value >= rangeSpec.max
+	}
+}
+
+func ZSkiplistLexValueGteMin(value string, rangeSpec *ZLexRangeSpec) bool{
+	if rangeSpec.minex {
+		return value > rangeSpec.min
+	} else {
+		return value >= rangeSpec.min
+	}
+}
+
+func ZSkiplistLexValueLteMax(value string, rangeSpec *ZLexRangeSpec) bool{
+	if rangeSpec.maxex {
+		return value < rangeSpec.max
+	} else {
+		return value <= rangeSpec.max
 	}
 }

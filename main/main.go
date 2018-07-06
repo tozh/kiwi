@@ -10,9 +10,9 @@ type data struct{
 }
 
 func main() {
-	a := 10
-	var b = a * A
-	fmt.Println(int64(64)<b)
+	a := "bbbba"
+	b := "bbbba"
+	fmt.Println(a<b)
 }
 
 
