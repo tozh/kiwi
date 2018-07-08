@@ -279,6 +279,31 @@ func (zsl *ZSkiplist) ZSkiplistDeleteRangeByLex(rangeSpec *ZLexRangeSpec, dict m
 	return removed
 }
 
+func (zsl *ZSkiplist) ZSkiplistDeleteRangeByRank(start int, end int, dict map[string]*ZSkiplistNode) int {
+	update := [ZSKIPLIST_MAXLEVEL]*ZSkiplistNode{}
+	traversed := 0
+	removed := 0
+	x := zsl.header
+	for i:=zsl.level-1;i>=0;i-- {
+		for x.level[i].forward != nil && traversed+x.level[i].span < start {
+			traversed += x.level[i].span
+			x = x.level[i].forward
+		}
+		update[i] = x
+	}
+	traversed++
+	x = x.level[0].forward
+	for x != nil && traversed <= end {
+		next := x.level[0].forward
+		zsl.zSkiplistDeleteNode(x, update)
+		delete(dict, x.ele)
+		removed++
+		x = next
+	}
+	return removed
+}
+
+
 
 
 
