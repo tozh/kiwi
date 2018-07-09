@@ -279,6 +279,8 @@ func (zsl *ZSkiplist) ZSkiplistDeleteRangeByLex(rangeSpec *ZLexRangeSpec, dict m
 	return removed
 }
 
+func (zsl *ZSkiplist) ZSkiplistDeleteRangeByRank()
+
 
 
 
