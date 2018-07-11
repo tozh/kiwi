@@ -16,7 +16,7 @@ type ZSkiplistLevel struct {
 
 type ZSkiplist struct {
 	header *ZSkiplistNode
-	tail * ZSkiplistNode
+	tail *ZSkiplistNode
 	len int
 	level int
 }
