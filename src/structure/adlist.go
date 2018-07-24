@@ -1,177 +1,178 @@
-package src
+package structure
 
+import ."redigo/src/constant"
 /* definition of List struct */
 type listNode struct{
-	prev *listNode
-	next *listNode
-	value interface{}
+	Prev *listNode
+	Next *listNode
+	Value interface{}
 }
 
 /* listNode methods */
 func (node *listNode) ListPrevNode() *listNode{
-	return node.prev
+	return node.Prev
 }
 
 func (node *listNode) ListNextNode() *listNode{
-	return node.next
+	return node.Next
 }
 
 func (node *listNode) ListNodeValue() interface{} {
-	return node.value
+	return node.Value
 }
 
 type listIter struct{
-	next *listNode
-	direction int
+	Next *listNode
+	Direction int
 }
 
 func (iter *listIter) ListNext() *listNode {
-	current := iter.next
+	current := iter.Next
 	if current != nil {
-		if iter.direction == ITERATION_DIRECTION_INORDER {
-			iter.next = current.next
+		if iter.Direction == ITERATION_DIRECTION_INORDER {
+			iter.Next = current.Next
 		} else {
-			iter.next = current.prev
+			iter.Next = current.Prev
 		}
 	}
 	return current
 }
 
 func (iter *listIter) ListRewind(list *List) {
-	iter.next = list.head
-	iter.direction = ITERATION_DIRECTION_INORDER
+	iter.Next = list.Head
+	iter.Direction = ITERATION_DIRECTION_INORDER
 }
 
 func (iter *listIter) ListRewindTail(list *List) {
-	iter.next = list.tail
-	iter.direction = ITERATION_DIRECTION_REVERSE_ORDER
+	iter.Next = list.Tail
+	iter.Direction = ITERATION_DIRECTION_REVERSE_ORDER
 }
 
 
 type List struct{
-	head *listNode
-	tail *listNode
-	len int
-	match func(value interface{}, key interface{}) bool
+	Head  *listNode
+	Tail  *listNode
+	Len   int
+	Match func(value interface{}, key interface{}) bool
 }
 
 /* List methods */
 func (list *List) ListLength() int{
-	return list.len
+	return list.Len
 }
 
 func (list *List) ListHead() *listNode{
-	return list.head
+	return list.Head
 }
 
 func (list *List) ListTail() *listNode{
-	return list.tail
+	return list.Tail
 }
 
 
 func (list *List) ListSetMatch(match func(value interface{}, key interface{}) bool) {
-	list.match = match
+	list.Match = match
 }
 
 func (list *List) ListAddNodeHead(value interface{}) {
 	node := listNode{}
-	node.value = value
-	if list.len == 0 {
-		list.head = &node
-		list.tail = &node
-		node.prev = nil
-		node.next = nil
+	node.Value = value
+	if list.Len == 0 {
+		list.Head = &node
+		list.Tail = &node
+		node.Prev = nil
+		node.Next = nil
 	} else {
-		list.head.prev = &node
-		node.next = list.head
-		list.head = &node
-		node.prev = nil
+		list.Head.Prev = &node
+		node.Next = list.Head
+		list.Head = &node
+		node.Prev = nil
 	}
-	list.len++
+	list.Len++
 }
 
 func (list *List) ListAddNodeTail(value interface{}) {
 	node := listNode{}
-	node.value = value
-	if list.len == 0 {
-		list.head = &node
-		list.tail = &node
-		node.prev = nil
-		node.next = nil
+	node.Value = value
+	if list.Len == 0 {
+		list.Head = &node
+		list.Tail = &node
+		node.Prev = nil
+		node.Next = nil
 	} else {
-		list.tail.next = &node
-		node.prev = list.tail
-		list.tail = &node
-		node.next = nil
+		list.Tail.Next = &node
+		node.Prev = list.Tail
+		list.Tail = &node
+		node.Next = nil
 	}
-	list.len++
+	list.Len++
 }
 
 /* Remove all the elements from the List without destroying the List itself. */
 func (list *List) ListEmpty() {
-	list.len = 0
-	list.head, list.tail = nil, nil
+	list.Len = 0
+	list.Head, list.Tail = nil, nil
 }
 
 func (list *List) ListInsertNode(oldNode *listNode, value interface{}, after bool) {
 	node := listNode{}
-	node.value = value
+	node.Value = value
 	if after {
-		node.prev = oldNode
-		node.next = oldNode.next
-		if oldNode==list.tail {
-			list.tail = &node
+		node.Prev = oldNode
+		node.Next = oldNode.Next
+		if oldNode==list.Tail {
+			list.Tail = &node
 		}
 	} else {
-		node.next = oldNode
-		node.prev = oldNode.prev
-		if list.head == oldNode {
-			list.head = &node
+		node.Next = oldNode
+		node.Prev = oldNode.Prev
+		if list.Head == oldNode {
+			list.Head = &node
 		}
 	}
-	if node.prev != nil {
-		node.prev.next = &node
+	if node.Prev != nil {
+		node.Prev.Next = &node
 	}
-	if node.next != nil {
-		node.next.prev = &node
+	if node.Next != nil {
+		node.Next.Prev = &node
 	}
-	list.len++
+	list.Len++
 }
 
 func (list *List) ListDelNode(node *listNode){
-	if node.prev != nil {
-		node.prev.next = node.next
+	if node.Prev != nil {
+		node.Prev.Next = node.Next
 	} else {
-		list.head = node.next
+		list.Head = node.Next
 	}
-	if node.next != nil {
-		node.next.prev = node.prev
+	if node.Next != nil {
+		node.Next.Prev = node.Prev
 	} else {
-		list.tail = node.prev
+		list.Tail = node.Prev
 	}
-	list.len--
+	list.Len--
 }
 
 /* Search the list for a node matching a given key.
- * The match is performed using the 'match' method
- * set with listSetMatchMethod(). If no 'match' method
- * is set, the 'value' pointer of every node is directly
+ * The Match is performed using the 'Match' method
+ * set with listSetMatchMethod(). If no 'Match' method
+ * is set, the 'Value' pointer of every node is directly
  * compared with the 'key' pointer.
  *
  * On success the first matching node pointer is returned
- * (search starts from head). If no matching node exists
+ * (search starts from Head). If no matching node exists
  * NULL is returned. */
 func (list *List) ListSearchKey(key interface{}) *listNode {
 	iter := list.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	node := iter.ListNext()
 
 	for node!=nil {
-		if list.match != nil {
-			if list.match(node.value, key) {
+		if list.Match != nil {
+			if list.Match(node.Value, key) {
 				return node
 			}
 		}else {
-			if key == node.value {
+			if key == node.Value {
 				return node
 			}
 		}
@@ -181,23 +182,23 @@ func (list *List) ListSearchKey(key interface{}) *listNode {
 }
 
 /* Return the element at the specified zero-based index
- * where 0 is the head, 1 is the element next to head
+ * where 0 is the Head, 1 is the element Next to Head
  * and so on. Negative integers are used in order to count
- * from the tail, -1 is the last element, -2 the penultimate
+ * from the Tail, -1 is the last element, -2 the penultimate
  * and so on. If the index is out of range NULL is returned. */
 func (list *List) ListIndex(index int) *listNode {
 	node := listNode{}
 	if index<0 {
 		index = (-index) - 1
-		node := list.tail
+		node := list.Tail
 		for index>=0 && node!=nil {
-			node = node.prev
+			node = node.Prev
 			index--
 		}
 	}else {
-		node := list.head
+		node := list.Head
 		for index>=0 && node!=nil {
-			node = node.next
+			node = node.Next
 			index--
 		}
 	}
@@ -208,33 +209,33 @@ func (list *List) ListRotate() {
 	if list.ListLength()<=1 {
 		return
 	}
-	tail := list.tail
-	/* detach current tail */
-	list.tail = tail.prev
-	list.tail.next = nil
+	tail := list.Tail
+	/* detach current Tail */
+	list.Tail = tail.Prev
+	list.Tail.Next = nil
 
-	/* move tail to the head */
-	list.head.prev = tail
-	list.tail.prev = nil
-	tail.next = list.head
-	list.head = tail
+	/* move Tail to the Head */
+	list.Head.Prev = tail
+	list.Tail.Prev = nil
+	tail.Next = list.Head
+	list.Head = tail
 }
 
 /* join <other list> to the end of the list */
 func (list *List) ListJoin(other *List) {
-	if other.head != nil {
-		other.head.prev = list.tail
+	if other.Head != nil {
+		other.Head.Prev = list.Tail
 	}
 
-	if list.tail != nil {
-		list.tail.next = other.head
+	if list.Tail != nil {
+		list.Tail.Next = other.Head
 	} else {
-		list.head = other.head
+		list.Head = other.Head
 	}
-	if other.tail != nil {
-		list.tail = other.tail
+	if other.Tail != nil {
+		list.Tail = other.Tail
 	}
-	list.len += other.len
+	list.Len += other.Len
 
 	/* Setup other as an empty list. */
 	other.ListEmpty()
@@ -244,11 +245,11 @@ func (list *List) ListJoin(other *List) {
 func (list *List) ListGetIterator(direction int) *listIter{
 	iter := listIter{}
 	if direction == ITERATION_DIRECTION_INORDER {
-		iter.next = list.head
+		iter.Next = list.Head
 	} else {
-		iter.next = list.tail
+		iter.Next = list.Tail
 	}
-	iter.direction = direction
+	iter.Direction = direction
 	return &iter
 }
 
@@ -259,11 +260,11 @@ func ListDup(list *List) *List {
 	if cp == nil {
 		return cp
 	}
-	cp.match = list.match
+	cp.Match = list.Match
 	iter := list.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	node:= iter.ListNext()
 	for node!=nil {
-		value := node.value
+		value := node.Value
 		cp.ListAddNodeTail(value)
 		node = iter.ListNext()
 	}
@@ -272,9 +273,9 @@ func ListDup(list *List) *List {
 
 func ListCreate() *List {
 	list := List{}
-	list.head, list.tail = nil, nil
-	list.len = 0
-	list.match = nil
+	list.Head, list.Tail = nil, nil
+	list.Len = 0
+	list.Match = nil
 	return &list
 }
 
