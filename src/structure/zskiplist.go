@@ -376,7 +376,7 @@ func ZSkiplistCreate() *ZSkiplist {
 
 func ZSkiplistRandomLevel() int{
 	level := 1
-	for int(rand.Intn(0xFFFF))<ZSKIPLIST_RANDOM_MAXLEVEL {
+	for float64(rand.Intn(0xFFFF)) < ZSKIPLIST_RANDOM_MAXLEVEL {
 		level++
 	}
 	if level<ZSKIPLIST_MAXLEVEL {

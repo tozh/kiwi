@@ -10,9 +10,12 @@ type data struct{
 }
 
 func main() {
-	a := "bbbba"
-	b := "bbbba"
-	fmt.Println(a<b)
+	var a float64 = 0xFFFF * 0.25
+	const X = 0xFFFF * 0.25
+	b := int(a)
+	fmt.Println(float64(b)<X)
+	fmt.Println(a)
+	fmt.Println(b)
 }
 
 

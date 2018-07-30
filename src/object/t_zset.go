@@ -1,8 +1,22 @@
 package object
 
+import (
+	."redigo/src/server"
+	."redigo/src/constant"
+)
+
+type ZSet struct {
+	RedisObject
+}
+
+
 /*-----------------------------------------------------------------------------
- * Skiplist implementation of the low level API
+ * Common sorted set API
  *----------------------------------------------------------------------------*/
 
-//zskip
-
+func (zset *ZSet) ZSetLength() int {
+	length := 0
+	if zset.Encoding == OBJ_ENCODING_SKIPLIST {
+		length =  zset.Ptr.(*ZSkiplist)
+	}
+}
