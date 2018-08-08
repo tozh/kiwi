@@ -2,31 +2,31 @@ package structure
 
 import ."redigo/src/constant"
 /* definition of List struct */
-type listNode struct{
-	Prev *listNode
-	Next *listNode
+type ListNode struct{
+	Prev *ListNode
+	Next *ListNode
 	Value interface{}
 }
 
-/* listNode methods */
-func (node *listNode) ListPrevNode() *listNode{
+/* ListNode methods */
+func (node *ListNode) ListPrevNode() *ListNode {
 	return node.Prev
 }
 
-func (node *listNode) ListNextNode() *listNode{
+func (node *ListNode) ListNextNode() *ListNode {
 	return node.Next
 }
 
-func (node *listNode) ListNodeValue() interface{} {
+func (node *ListNode) ListNodeValue() interface{} {
 	return node.Value
 }
 
 type listIter struct{
-	Next *listNode
+	Next *ListNode
 	Direction int
 }
 
-func (iter *listIter) ListNext() *listNode {
+func (iter *listIter) ListNext() *ListNode {
 	current := iter.Next
 	if current != nil {
 		if iter.Direction == ITERATION_DIRECTION_INORDER {
@@ -50,8 +50,8 @@ func (iter *listIter) ListRewindTail(list *List) {
 
 
 type List struct{
-	Head  *listNode
-	Tail  *listNode
+	Head  *ListNode
+	Tail  *ListNode
 	Len   int
 	Match func(value interface{}, key interface{}) bool
 }
@@ -61,11 +61,11 @@ func (list *List) ListLength() int{
 	return list.Len
 }
 
-func (list *List) ListHead() *listNode{
+func (list *List) ListHead() *ListNode {
 	return list.Head
 }
 
-func (list *List) ListTail() *listNode{
+func (list *List) ListTail() *ListNode {
 	return list.Tail
 }
 
@@ -75,7 +75,7 @@ func (list *List) ListSetMatch(match func(value interface{}, key interface{}) bo
 }
 
 func (list *List) ListAddNodeHead(value interface{}) {
-	node := listNode{}
+	node := ListNode{}
 	node.Value = value
 	if list.Len == 0 {
 		list.Head = &node
@@ -92,7 +92,7 @@ func (list *List) ListAddNodeHead(value interface{}) {
 }
 
 func (list *List) ListAddNodeTail(value interface{}) {
-	node := listNode{}
+	node := ListNode{}
 	node.Value = value
 	if list.Len == 0 {
 		list.Head = &node
@@ -114,8 +114,8 @@ func (list *List) ListEmpty() {
 	list.Head, list.Tail = nil, nil
 }
 
-func (list *List) ListInsertNode(oldNode *listNode, value interface{}, after bool) {
-	node := listNode{}
+func (list *List) ListInsertNode(oldNode *ListNode, value interface{}, after bool) {
+	node := ListNode{}
 	node.Value = value
 	if after {
 		node.Prev = oldNode
@@ -139,7 +139,7 @@ func (list *List) ListInsertNode(oldNode *listNode, value interface{}, after boo
 	list.Len++
 }
 
-func (list *List) ListDelNode(node *listNode){
+func (list *List) ListDelNode(node *ListNode){
 	if node.Prev != nil {
 		node.Prev.Next = node.Next
 	} else {
@@ -162,7 +162,7 @@ func (list *List) ListDelNode(node *listNode){
  * On success the first matching node pointer is returned
  * (search starts from Head). If no matching node exists
  * NULL is returned. */
-func (list *List) ListSearchKey(key interface{}) *listNode {
+func (list *List) ListSearchKey(key interface{}) *ListNode {
 	iter := list.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	node := iter.ListNext()
 
@@ -186,8 +186,8 @@ func (list *List) ListSearchKey(key interface{}) *listNode {
  * and so on. Negative integers are used in order to count
  * from the Tail, -1 is the last element, -2 the penultimate
  * and so on. If the index is out of range NULL is returned. */
-func (list *List) ListIndex(index int) *listNode {
-	node := listNode{}
+func (list *List) ListIndex(index int) *ListNode {
+	node := ListNode{}
 	if index<0 {
 		index = (-index) - 1
 		node := list.Tail
