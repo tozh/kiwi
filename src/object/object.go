@@ -43,7 +43,8 @@ type object interface {
 	getLRU() int
 	setLRU(lru int)
 	getRefCount() int
-	IncrRefCount() int
+	setRefCount(refCount int)
+	IncrRefCount(count int) int
 }
 
 func (obj *Object) getEncode() int{
@@ -61,5 +62,27 @@ func (obj *Object) getRType() int {
 func (obj *Object) setRType(rtype int) {
 	obj.RType = rtype
 }
+
+func (obj *Object) getLRU() int{
+	return obj.Lru
+}
+
+func (obj *Object) setLRU(lru int) {
+	obj.Lru = lru
+}
+
+func (obj *Object) getRefCount() int {
+	return obj.RefConut
+}
+
+func (obj *Object) setRefCount(refCount int) {
+	obj.RefConut = refCount
+}
+
+func (obj *Object) IncrRefCount(count int) int {
+	obj.RefConut += count
+	return obj.RefConut
+}
+
 
 
