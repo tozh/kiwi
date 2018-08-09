@@ -15,10 +15,11 @@ type Db struct {
 }
 
 func (db *Db) getKey(key string) *IObject {
+
 	return db.Dict[key]
 }
 
-func (db *Db) getKey(key string) *IObject {
+func (db *Db) getKeyForWrite(key string) *IObject {
 	return db.Dict[key]
 }
 
