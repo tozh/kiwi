@@ -9,7 +9,7 @@ const ZSKIPLIST_MAXLEVEL = 64
 const ZSKIPLIST_P = 0.25
 const ZSKIPLIST_RANDOM_MAXLEVEL = 0xFFFF * ZSKIPLIST_P
 
-/* constants for RedisObject */
+/* constants for Object */
 const OBJ_ENCODING_RAW = 0
 const OBJ_ENCODING_INT = 1
 const OBJ_ENCODING_HT = 2

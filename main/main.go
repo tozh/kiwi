@@ -1,21 +1,18 @@
 package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
 const A = 10
 type data struct{
-	ages []int
+	ages int
 }
 
 func main() {
-	var a float64 = 0xFFFF * 0.25
-	const X = 0xFFFF * 0.25
-	b := int(a)
-	fmt.Println(float64(b)<X)
-	fmt.Println(a)
-	fmt.Println(b)
+	var m = make(map[string]*data)
+	d := data{2}
+	m["haha"] = &d
+	fmt.Println(m["a"])
+	fmt.Println(m["haha"].ages)
 }
 
 

@@ -6,7 +6,7 @@ import (
 )
 
 type ZSet struct {
-	RedisObject
+	Object
 }
 
 

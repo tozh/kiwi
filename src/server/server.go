@@ -1,7 +1,7 @@
 package server
 import ."redigo/src/structure"
 
-type RedisObject struct {
+type Object struct {
 	ObjType int
 	Encoding int
 	Lru uint
@@ -11,7 +11,7 @@ type RedisObject struct {
 
 type RedisDb struct {
 	Dict map[string]interface{}
-	Expires map[*RedisObject]uint
+	Expires map[*Object]uint
 	Id uint
 	AvgTTL uint
 	DefragLater *List
@@ -36,10 +36,10 @@ type Client struct {
 	Name string
 	QueryBuf string // buffer use to accumulate client query
 	QueryBufPeak int
-	Argc int  // count of arguments
-	Argv []*RedisObject // arguments of current command
+	Argc int       // count of arguments
+	Argv []*Object // arguments of current command
 	Cmd *RedisCommand
-	LastCmd *RedisObject
+	LastCmd *Object
 	Reply *List
 	ReplySize int
 	SentSize int // Amount of bytes already sent in the current buffer or object being sent.
@@ -48,8 +48,8 @@ type Client struct {
 }
 
 type RedisOp struct {
-	Argc int  // count of arguments
-	Argv []*RedisObject // arguments of current command
+	Argc int       // count of arguments
+	Argv []*Object // arguments of current command
 	DbId int
 	Target int
 	Cmd *RedisCommand
