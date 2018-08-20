@@ -1,90 +1,95 @@
 package server
-import ."redigo/src/structure"
 
-type Object struct {
-	ObjType int
-	Encoding int
-	Lru uint
-	RefCount int
-	Ptr interface{}
-}
+import (
+	. "redigo/src/structure"
+	. "redigo/src/db"
+	. "redigo/src/object"
+)
 
-type RedisDb struct {
-	Dict map[string]interface{}
-	Expires map[*Object]uint
-	Id uint
-	AvgTTL uint
-	DefragLater *List
-}
+//type Object struct {
+//	ObjType int64
+//	Encoding int64
+//	Lru int64
+//	RefCount int64
+//	Ptr interface{}
+//}
+//
+//type RedisDb struct {
+//	Dict map[string]interface{}
+//	Expires map[*Object]int64
+//	Id int64
+//	AvgTTL int64
+//	DefragLater *List
+//}
 
 type RedisCommand struct {
 	Name string
-	Arity int
-	Flags int
+	Arity int64
+	Flags int64
 	/* What keys should be loaded in background when calling this command? */
-	FirstKey int
-	LastKey int
-	KeyStep int
-	Msec uint
-	Calls uint
+	FirstKey int64
+	LastKey int64
+	KeyStep int64
+	Msec int64
+	Calls int64
 }
 
 type Client struct {
-	Id int
-	Fd int
-	Db *RedisDb
+	Id int64
+	Fd int64
+	Db *Db
 	Name string
 	QueryBuf string // buffer use to accumulate client query
-	QueryBufPeak int
-	Argc int       // count of arguments
-	Argv []*Object // arguments of current command
+	QueryBufPeak int64
+	Argc int64       // count of arguments
+	Argv []*IObject // arguments of current command
 	Cmd *RedisCommand
-	LastCmd *Object
+	LastCmd *IObject
 	Reply *List
-	ReplySize int
-	SentSize int // Amount of bytes already sent in the current buffer or object being sent.
-	CreateTime uint
-	LastInteraction uint
+	ReplySize int64
+	SentSize int64 // Amount of bytes already sent in the current buffer or object being sent.
+	CreateTime int64
+	LastInteraction  int64
 }
 
-type RedisOp struct {
-	Argc int       // count of arguments
-	Argv []*Object // arguments of current command
-	DbId int
-	Target int
+type Op struct {
+	Argc int64       // count of arguments
+	Argv []*IObject // arguments of current command
+	DbId int64
+	Target int64
 	Cmd *RedisCommand
 }
 
-type RDBSaveInfo struct {
-	ReplStreamDb int
-	ReplIdIsSet bool
-	ReplId string
-	ReplOffset int
-}
+//type RDBSaveInfo struct {
+//	ReplStreamDb int64
+//	ReplIdIsSet bool
+//	ReplId string
+//	ReplOffset int64
+//}
 
 
-type RedisServer struct {
-	Pid int
+type Server struct {
+	Pid int64
 	PidFile string
 	ConfigFile string
 	ExecFile string
 	ExecArgv []string
-
-	RedisDb RedisDb
+	Hz int64		// serverCron() calls frequency in hertz
+	Db *Db
 
 	Commands map[interface{}]RedisCommand
 	OrigCommands map[interface{}]RedisCommand
 
-	LruClock uint // Clock for LRU eviction
+	LruClock int64 // Clock for LRU eviction
 	ShutdownNeedAsap bool
 
-	CronLoops int
+	CronLoops int64
 
 	LoadModuleQueue *List  // List of modules to load at startup.
 
 
 	// Network
-	Port int  // TCP listening port
+	Port int64  // TCP listening port
 	BindAddr []string
 	UnixSocket string  // UNIX socket path
 	IpFileDesc []string  // TCP socket file descriptors
@@ -92,52 +97,48 @@ type RedisServer struct {
 	Clients *List  // List of active clients
 	//clientsToClose *List  // Clients to close asynchronously
 
-	Loading bool  // Server is loading date from disk if true
-	LoadingTotalSize int
-	LoadingLoadedSize int
-	LoadingStartTime uint
+	//Loading bool  // Server is loading date from disk if true
+	//LoadingTotalSize int64
+	//LoadingLoadedSize int64
+	//LoadingStartTime int64
+	//
+	//
+	//// Configuration
+	//MaxIdleTimeSec int64  // Client timeout in seconds
+	//TcpKeepAlive bool
+	//
+	//
+	//// AOF persistence
+	//AofState int64  //  AOF(ON|OFF|WAIT_REWRITE)
+	//AofChildPid int64  // PID if rewriting process
+	//AofFileSync int64  // Kind of fsync() policy
+	//AofFileName string
+	//AofRewirtePercent int64  // Rewrite AOF if % growth is > M and...
+	//AofRewriteMinSize int64
+	//AofRewriteMaxSize int64
+	//AofRewriteScheduled bool  // Rewrite once BGSAVE terminates.
+	//AofRewriteBufBlocks *List  // Hold changes during AOF rewrites
+	//AofBuf string  // Aof buffer
+	//AofFileDesc int64  // File descriptor of currently selected AOF file
+	//AofSelectedDb bool  // Currently selected DB in AOF
+	//AofPropagate []*RedisOp  // Additional command to propagate.
 
 
-	// Configuration
-	MaxIdleTimeSec uint  // Client timeout in seconds
-	TcpKeepAlive bool
-
-
-	// AOF persistence
-	AofState int  //  AOF(ON|OFF|WAIT_REWRITE)
-	AofChildPid int  // PID if rewriting process
-	AofFileSync int  // Kind of fsync() policy
-	AofFileName string
-	AofRewirtePercent int  // Rewrite AOF if % growth is > M and...
-	AofRewriteMinSize int
-	AofRewriteMaxSize int
-	AofRewriteScheduled bool  // Rewrite once BGSAVE terminates.
-	AofRewriteBufBlocks *List  // Hold changes during AOF rewrites
-	AofBuf string  // Aof buffer
-	AofFileDesc int  // File descriptor of currently selected AOF file
-	AofSelectedDb bool  // Currently selected DB in AOF
-	AofPropagate []*RedisOp  // Additional command to propagate.
-
-
-	// RDB persistence
-
-
-
-	// Logging
-	LogFile string
-	SysLogEnable bool
-
-
-	// Zip structure config
-	HashMaxZiplistEntries int
-	HashMaxZiplistValue int
-	SetMaxInsetEntrie int
-	ZSetMaxZiplistEntries int
-	ZSetMaxZiplistvalue int
-	
-
-
-
-
-
+	//// RDB persistence
+	//
+	//// Logging
+	//LogFile string
+	//SysLogEnable bool
+	//
+	//
+	//// Zip structure config
+	//HashMaxZiplistEntries int64
+	//HashMaxZiplistValue int64
+	//SetMaxInsetEntrie int64
+	//ZSetMaxZiplistEntries int64
+	//ZSetMaxZiplistvalue int64
 }
+
+
+
+
