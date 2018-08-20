@@ -9,11 +9,19 @@ type data struct{
 
 func main() {
 	var m = make(map[string]*data)
-	d := data{2}
-	m["haha"] = &d
-	fmt.Println(m["a"])
-	fmt.Println(m["haha"].ages)
+	m["1"] = &data{
+		1,
+	}
+
+
+
+	fmt.Println(m["2"])
+	//d := data{2}
+	//m["haha"] = &d
+	//fmt.Println(m["a"])
+	//fmt.Println(m["haha"].ages)
 }
+
 
 
 
