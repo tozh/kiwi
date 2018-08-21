@@ -5,7 +5,7 @@ import (
 )
 
 type Db struct {
-	Dict map[string]IObject
+	Dict map[*StrObject]IObject
 	//Expires map[IObject]int64
 	Id int64
 	//AvgTTL int64
@@ -13,30 +13,30 @@ type Db struct {
 	//DefragLater *List
 }
 
-func (db *Db) get(key string) (string, IObject) {
+func (db *Db) get(key *StrObject) (*StrObject, IObject) {
 	return key, db.Dict[key]
 }
 
-func (db *Db) getForWrite(key string) (string, IObject) {
+func (db *Db) getForWrite(key *StrObject) (*StrObject, IObject) {
 	return key, db.Dict[key]
 }
 
-func (db *Db) randGet(key string) (string, IObject) {
+func (db *Db) randGet(key *StrObject) (*StrObject, IObject) {
 	for key, value := range db.Dict {
 		return key, value
 	}
-	return "", nil
+	return nil, nil
 }
 
-func (db *Db) set(key string, ptr IObject) {
+func (db *Db) set(key *StrObject, ptr IObject) {
 	db.Dict[key] = ptr
 }
 
-func (db *Db) delete(key string) {
+func (db *Db) delete(key *StrObject) {
 	delete(db.Dict, key)
 }
 
-func (db *Db) setnx(key string, ptr IObject) bool{
+func (db *Db) setnx(key *StrObject, ptr IObject) bool{
 	if _, value := db.get(key); value != nil {
 		return false
 	} else {
@@ -45,7 +45,7 @@ func (db *Db) setnx(key string, ptr IObject) bool{
 	}
 }
 
-func (db *Db) setex(key string, ptr IObject) bool {
+func (db *Db) setex(key *StrObject, ptr IObject) bool {
 	if _, value := db.get(key); value != nil {
 		db.set(key, ptr)
 		return true
@@ -54,7 +54,7 @@ func (db *Db) setex(key string, ptr IObject) bool {
 	}
 }
 
-func (db *Db) exist(key string) bool {
+func (db *Db) exist(key *StrObject) bool {
 	_, value := db.get(key)
 	return value != nil
 }
@@ -64,7 +64,7 @@ func (db *Db) size() int64 {
 }
 
 func (db *Db) empty() {
-	db.Dict = make(map[string] IObject)
+	db.Dict = make(map[*StrObject] IObject)
 }
 
 

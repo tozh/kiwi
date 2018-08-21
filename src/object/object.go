@@ -16,12 +16,12 @@ type Object struct {
 
 type StrObject struct {
 	Object
-	Value string
+	Value *string
 }
 
 type IntObject struct {
 	Object
-	Value int64
+	Value *int64
 }
 
 type ListObject struct {
@@ -142,11 +142,11 @@ func (obj *Object) IncrRefCount(count int64) int64 {
 
 
 func (strObj *StrObject) getValue() string {
-	return strObj.Value
+	return *strObj.Value
 }
 
 func (strObj *StrObject) setValue(str string) bool {
-	strObj.Value = str
+	strObj.Value = &str
 	strObj.setRType(OBJ_RTYPE_STR)
 	return true
 }
@@ -160,13 +160,12 @@ func (strObj *StrObject) getSetValueFunc() interface{} {
 }
 
 
-
 func (intObj *IntObject)  getValue() int64 {
-	return intObj.Value
+	return *intObj.Value
 }
 
 func (intObj *IntObject) setValue(num int64) bool {
-	intObj.Value = num
+	intObj.Value = &num
 	intObj.RType = OBJ_RTYPE_INT
 	return true
 }
@@ -232,7 +231,7 @@ func createStrObject(str string, server *Server) IObject {
 	obj := createObject(OBJ_RTYPE_STR, OBJ_ENCODING_RAW, server)
 	strObj := StrObject {
 		Object:obj,
-		Value:str,
+		Value:&str,
 	}
 	return &strObj
 }
@@ -241,7 +240,7 @@ func createIntObject(num int64, server *Server) IObject {
 	obj := createObject(OBJ_RTYPE_INT, OBJ_ENCODING_INT, server)
 	strObj := IntObject {
 		Object:obj,
-		Value:num,
+		Value:&num,
 	}
 	return &strObj
 }

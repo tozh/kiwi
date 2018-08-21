@@ -42,9 +42,9 @@ type Client struct {
 	QueryBuf string // buffer use to accumulate client query
 	QueryBufPeak int64
 	Argc int64       // count of arguments
-	Argv []*IObject // arguments of current command
+	Argv []IObject // arguments of current command
 	Cmd *RedisCommand
-	LastCmd *IObject
+	LastCmd *RedisCommand
 	Reply *List
 	ReplySize int64
 	SentSize int64 // Amount of bytes already sent in the current buffer or object being sent.
@@ -54,7 +54,7 @@ type Client struct {
 
 type Op struct {
 	Argc int64       // count of arguments
-	Argv []*IObject // arguments of current command
+	Argv []string // arguments of current command
 	DbId int64
 	Target int64
 	Cmd *RedisCommand

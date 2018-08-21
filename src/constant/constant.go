@@ -36,3 +36,10 @@ const DICT_ERR = 1
 const LRU_BITS = 24
 const LRU_CLOCK_MAX = (1 << LRU_BITS) - 1  /* Max value of obj->lru */
 const LRU_CLOCK_RESOLUTION = 1000  /* LRU clock resolution in ms */
+
+
+const OBJ_SET_NO_FLAGS = 0
+const OBJ_SET_NX = 1<<0     /* Set if key not exists. */
+const OBJ_SET_XX = 1<<1     /* Set if key exists. */
+const OBJ_SET_EX = 1<<2     /* Set if time in seconds is given */
+const OBJ_SET_PX = 1<<3     /* Set if time in ms in given */
