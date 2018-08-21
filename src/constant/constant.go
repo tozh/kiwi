@@ -18,9 +18,8 @@ const OBJ_ENCODING_LINKEDLIST = 4
 const OBJ_ENCODING_ZIPLIST = 5
 const OBJ_ENCODING_INTSET = 6
 const OBJ_ENCODING_SKIPLIST = 7
-const OBJ_ENCODING_EMBSTR = 8
-const OBJ_ENCODING_QUICKLIST = 9
-const OBJ_ENCODING_STREAM = 10
+const OBJ_ENCODING_QUICKLIST = 8
+const OBJ_ENCODING_STREAM = 9
 
 const OBJ_RTYPE_STR = 0
 const OBJ_RTYPE_INT = 1
@@ -43,3 +42,5 @@ const OBJ_SET_NX = 1<<0     /* Set if key not exists. */
 const OBJ_SET_XX = 1<<1     /* Set if key exists. */
 const OBJ_SET_EX = 1<<2     /* Set if time in seconds is given */
 const OBJ_SET_PX = 1<<3     /* Set if time in ms in given */
+
+const SHARED_INTEGERS = 10000

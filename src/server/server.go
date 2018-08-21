@@ -4,6 +4,7 @@ import (
 	. "redigo/src/structure"
 	. "redigo/src/db"
 	. "redigo/src/object"
+	"redigo/src/constant"
 )
 
 //type Object struct {
@@ -32,6 +33,11 @@ type RedisCommand struct {
 	KeyStep int64
 	Msec int64
 	Calls int64
+}
+
+type SharedObjects struct {
+	Integers [constant.SHARED_INTEGERS]IObject
+
 }
 
 type Client struct {
@@ -139,6 +145,8 @@ type Server struct {
 	//SetMaxInsetEntrie int64
 	//ZSetMaxZiplistEntries int64
 	//ZSetMaxZiplistvalue int64
+
+	Shared SharedObjects
 }
 
 

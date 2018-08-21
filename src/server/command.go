@@ -27,7 +27,7 @@ func (s *Server) SetCommand(c *Client) {
 		// expire is not implemented now, so end here
 	}
 
-	//c.Argv[2] = tryObjectEncoding(c.Argv[2])
+	c.Argv[2] = TryObjectEncoding(s, c.Argv[2])
 	s.SetGenericCommand(c, int64(flags), c.Argv[1], c.Argv[2])
 }
 
@@ -37,7 +37,7 @@ func (s *Server) SetGenericCommand(c *Client, flags int64, key IObject, value IO
 			// addReply
 			return
 	}
-	c.Db.Set(key.(*StrObject), value)
+	c.Db.Set(key, value)
 	s.Dirty++
 
 	//if expire
@@ -46,7 +46,7 @@ func (s *Server) SetGenericCommand(c *Client, flags int64, key IObject, value IO
 }
 
 func (s *Server) SetNxCommand(c *Client) {
-	//c.Argv[2] = tryObjectEncoding(c.Argv[2])
+	c.Argv[2] = TryObjectEncode(s, c.Argv[2])
 	s.SetGenericCommand(c, OBJ_SET_NX, c.Argv[1], c.Argv[2])
 }
 
@@ -56,11 +56,12 @@ func (s *Server) FlushAllCommand(c *Client) {
 }
 
 func (s *Server) ExistCommand(c *Client) {
-	c.Db.Exist(c.Argv[1].(*StrObject))
+	c.Db.Exist(c.Argv[1])
 	// expire
 	// addReply
 }
 
+func (s *Server) incr
 
 
 

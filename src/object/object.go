@@ -5,7 +5,7 @@ import (
 	. "redigo/src/constant"
 	"time"
 	."redigo/src/server"
-	"strconv"
+	"math"
 )
 
 type Object struct {
@@ -15,10 +15,7 @@ type Object struct {
 	RefConut int64
 }
 
-type StrObject struct {
-	Object
-	Value *string
-}
+
 
 type IntObject struct {
 	Object
@@ -56,18 +53,20 @@ type IObject interface {
 	setLRU(lru int64)
 	getRefCount() int64
 	setRefCount(refCount int64)
-	IncrRefCount(count int64) int64
+	incrRefCount() int64
+	decrRefCount() int64
 	getGetValueFunc() interface{}
 	getSetValueFunc() interface{}
+	isStr() bool
 	//getCreateFunc()
 }
 
-func (obj *Object) getRType() int64 {
-	return obj.RType
+func (o *Object) getRType() int64 {
+	return o.RType
 }
 
-func (obj *Object) getRTypeInString() string {
-	switch obj.RType {
+func (o *Object) getRTypeInString() string {
+	switch o.RType {
 	case OBJ_RTYPE_STR:
 		return "string"
 	case OBJ_RTYPE_INT:
@@ -85,16 +84,16 @@ func (obj *Object) getRTypeInString() string {
 	}
 }
 
-func (obj *Object) setRType(rtype int64) {
-	obj.RType = rtype
+func (o *Object) setRType(rtype int64) {
+	o.RType = rtype
 }
 
-func (obj *Object) getEncode() int64 {
-	return obj.Encoding
+func (o *Object) getEncode() int64 {
+	return o.Encoding
 }
 
-func (obj *Object) getEncodeInString() string {
-	switch obj.Encoding {
+func (o *Object) getEncodeInString() string {
+	switch o.Encoding {
 	case OBJ_ENCODING_STR:
 		return "raw"
 	case OBJ_ENCODING_INT:
@@ -109,75 +108,71 @@ func (obj *Object) getEncodeInString() string {
 		return "intset"
 	case OBJ_ENCODING_SKIPLIST:
 		return "skiplist"
-	case OBJ_ENCODING_EMBSTR:
-		return "embstr"
 	default:
 		return "unknown"
 	}
 }
 
-func (obj *Object) setEncode(encode int64) {
-	obj.Encoding = encode
+func (o *Object) setEncode(encode int64) {
+	o.Encoding = encode
 }
 
-func (obj *Object) getLRU() int64{
-	return obj.Lru
+func (o *Object) getLRU() int64{
+	return o.Lru
 }
 
-func (obj *Object) setLRU(lru int64) {
-	obj.Lru = lru
+func (o *Object) setLRU(lru int64) {
+	o.Lru = lru
 }
 
-func (obj *Object) getRefCount() int64 {
-	return obj.RefConut
+func (o *Object) getRefCount() int64 {
+	return o.RefConut
 }
 
-func (obj *Object) setRefCount(refCount int64) {
-	obj.RefConut = refCount
+func (o *Object) setRefCount(refCount int64) {
+	o.RefConut = refCount
 }
 
-func (obj *Object) IncrRefCount(count int64) int64 {
-	obj.RefConut += count
-	return obj.RefConut
+func (o *Object) incrRefCount() int64 {
+	if o.RefConut != math.MaxInt64 {
+		o.RefConut--
+	}
+	return o.RefConut
 }
 
-
-func (strObj *StrObject) getValue() string {
-	return *strObj.Value
-}
-
-func (strObj *StrObject) setValue(str string) bool {
-	strObj.Value = &str
-	strObj.setRType(OBJ_RTYPE_STR)
-	return true
-}
-
-func (strObj *StrObject) getGetValueFunc() interface{} {
-	return strObj.getValue
-}
-
-func (strObj *StrObject) getSetValueFunc() interface{} {
-	return strObj.setValue
+func (o *Object) decrRefCount() int64 {
+	if o.RType == OBJ_RTYPE_STR || o.RType == OBJ_RTYPE_INT {
+		if o.RefConut <= 0 {
+			panic("decrRefCount against refcount <= 0")
+		}
+		if o.RefConut != math.MaxInt64 {
+			o.RefConut--
+		}
+	}
+	return o.RefConut
 }
 
 
-func (intObj *IntObject)  getValue() int64 {
-	return *intObj.Value
-}
 
-func (intObj *IntObject) setValue(num int64) bool {
-	intObj.Value = &num
-	intObj.RType = OBJ_RTYPE_INT
-	return true
-}
 
-func (intObj *IntObject) getGetValueFunc() interface{} {
-	return intObj.getValue
-}
 
-func (intObj *IntObject) getSetValueFunc() interface{} {
-	return intObj.setValue
-}
+//func (intObj *IntObject)  getValue() int64 {
+//	return *intObj.Value
+//}
+//
+//func (intObj *IntObject) setValue(num int64) bool {
+//	intObj.Value = &num
+//	intObj.RType = OBJ_RTYPE_INT
+//	return true
+//}
+//
+//func (intObj *IntObject) getGetValueFunc() interface{} {
+//	return intObj.getValue
+//}
+//
+//func (intObj *IntObject) getSetValueFunc() interface{} {
+//	return intObj.setValue
+//}
 
 //
 //func (listObj *ListObject) getValue() interface{} {
@@ -195,7 +190,7 @@ func (intObj *IntObject) getSetValueFunc() interface{} {
 //func (setObj *SetObject) getValue() interface{} {
 //	return setObj.Value
 //}
-
+//
 //func (strObj *StrObject) setValue(str string) bool {
 //	strObj.Value
 //}
@@ -237,14 +232,14 @@ func createStrObject(str string, server *Server) IObject {
 	return &strObj
 }
 
-func createIntObject(num int64, server *Server) IObject {
-	obj := createObject(OBJ_RTYPE_INT, OBJ_ENCODING_INT, server)
-	strObj := IntObject {
-		Object:obj,
-		Value:&num,
-	}
-	return &strObj
-}
+//func createIntObject(num int64, server *Server) IObject {
+//	obj := createObject(OBJ_RTYPE_INT, OBJ_ENCODING_INT, server)
+//	strObj := IntObject {
+//		Object:obj,
+//		Value:&num,
+//	}
+//	return &strObj
+//}
 
 func LRUClock(server *Server) int64 {
 	if 1000/server.Hz <= LRU_CLOCK_RESOLUTION {
@@ -260,19 +255,11 @@ func SimpleGetLRUClock() int64 {
 	return mstime / LRU_CLOCK_RESOLUTION & LRU_CLOCK_MAX
 }
 
-func TryObjectEncoding(o IObject) IObject {
-	if !(o.getEncode() == OBJ_ENCODING_STR||o.getEncode() == OBJ_ENCODING_EMBSTR) {
-		return o
-	}
-	if o.getRefCount() > 1 {
-		return o
-	}
-	//length := len(*o.(*StrObject).Value)
-	value, err := strconv.ParseInt(*o.(*StrObject).Value, 10, 64)
-	if err == nil {
-		if o.getEncode() == OBJ_ENCODING_STR {
-			o.Value
-		}
-	}
+
+func (o *Object) isStr() bool {
+	return o.getRType() == OBJ_RTYPE_STR &&o.getEncode() == OBJ_ENCODING_STR
 }
 
+func (o *Object) isInt() bool {
+	return o.getRType() == OBJ_RTYPE_INT && o.getEncode() == OBJ_ENCODING_INT
+}
