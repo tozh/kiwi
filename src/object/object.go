@@ -5,6 +5,7 @@ import (
 	. "redigo/src/constant"
 	"time"
 	."redigo/src/server"
+	"strconv"
 )
 
 type Object struct {
@@ -94,7 +95,7 @@ func (obj *Object) getEncode() int64 {
 
 func (obj *Object) getEncodeInString() string {
 	switch obj.Encoding {
-	case OBJ_ENCODING_RAW:
+	case OBJ_ENCODING_STR:
 		return "raw"
 	case OBJ_ENCODING_INT:
 		return "int"
@@ -228,7 +229,7 @@ func createObject(rtype int64, encoding int64,server *Server) Object{
 }
 
 func createStrObject(str string, server *Server) IObject {
-	obj := createObject(OBJ_RTYPE_STR, OBJ_ENCODING_RAW, server)
+	obj := createObject(OBJ_RTYPE_STR, OBJ_ENCODING_STR, server)
 	strObj := StrObject {
 		Object:obj,
 		Value:&str,
@@ -257,5 +258,21 @@ func LRUClock(server *Server) int64 {
 func SimpleGetLRUClock() int64 {
 	mstime := time.Now().UnixNano()/1000
 	return mstime / LRU_CLOCK_RESOLUTION & LRU_CLOCK_MAX
+}
+
+func TryObjectEncoding(o IObject) IObject {
+	if !(o.getEncode() == OBJ_ENCODING_STR||o.getEncode() == OBJ_ENCODING_EMBSTR) {
+		return o
+	}
+	if o.getRefCount() > 1 {
+		return o
+	}
+	//length := len(*o.(*StrObject).Value)
+	value, err := strconv.ParseInt(*o.(*StrObject).Value, 10, 64)
+	if err == nil {
+		if o.getEncode() == OBJ_ENCODING_STR {
+			o.Value
+		}
+	}
 }
 

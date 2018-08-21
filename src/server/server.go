@@ -108,6 +108,8 @@ type Server struct {
 	//TcpKeepAlive bool
 	//
 	//
+	Dirty int64  // Changes to DB from the last save
+	// DirtyBeforeBgSave  //  Used to restore dirty on failed BGSAVE
 	//// AOF persistence
 	//AofState int64  //  AOF(ON|OFF|WAIT_REWRITE)
 	//AofChildPid int64  // PID if rewriting process
@@ -138,6 +140,8 @@ type Server struct {
 	//ZSetMaxZiplistEntries int64
 	//ZSetMaxZiplistvalue int64
 }
+
+
 
 
 

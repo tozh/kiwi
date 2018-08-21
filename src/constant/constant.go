@@ -10,7 +10,7 @@ const ZSKIPLIST_P = 0.25
 const ZSKIPLIST_RANDOM_MAXLEVEL = 0xFFFF * ZSKIPLIST_P
 
 /* constants for Object */
-const OBJ_ENCODING_RAW = 0
+const OBJ_ENCODING_STR = 0
 const OBJ_ENCODING_INT = 1
 const OBJ_ENCODING_HT = 2
 const OBJ_ENCODING_ZIPMAP = 3

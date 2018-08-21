@@ -13,57 +13,57 @@ type Db struct {
 	//DefragLater *List
 }
 
-func (db *Db) get(key *StrObject) (*StrObject, IObject) {
-	return key, db.Dict[key]
+func (db *Db) Get(key *StrObject) IObject {
+	return db.Dict[key]
 }
 
-func (db *Db) getForWrite(key *StrObject) (*StrObject, IObject) {
-	return key, db.Dict[key]
+func (db *Db) GetForWrite(key *StrObject) IObject {
+	return db.Dict[key]
 }
 
-func (db *Db) randGet(key *StrObject) (*StrObject, IObject) {
-	for key, value := range db.Dict {
-		return key, value
+func (db *Db) RandGet(key *StrObject) IObject {
+	for _, value := range db.Dict {
+		return value
 	}
-	return nil, nil
+	return nil
 }
 
-func (db *Db) set(key *StrObject, ptr IObject) {
+func (db *Db) Set(key *StrObject, ptr IObject) {
 	db.Dict[key] = ptr
 }
 
-func (db *Db) delete(key *StrObject) {
+func (db *Db) Delete(key *StrObject) {
 	delete(db.Dict, key)
 }
 
-func (db *Db) setnx(key *StrObject, ptr IObject) bool{
-	if _, value := db.get(key); value != nil {
+func (db *Db) SetNx(key *StrObject, ptr IObject) bool{
+	if value := db.Get(key); value != nil {
 		return false
 	} else {
-		db.set(key, ptr)
+		db.Set(key, ptr)
 		return true
 	}
 }
 
-func (db *Db) setex(key *StrObject, ptr IObject) bool {
-	if _, value := db.get(key); value != nil {
-		db.set(key, ptr)
+func (db *Db) SetEx(key *StrObject, ptr IObject) bool {
+	if value := db.Get(key); value != nil {
+		db.Set(key, ptr)
 		return true
 	} else {
 		return false
 	}
 }
 
-func (db *Db) exist(key *StrObject) bool {
-	_, value := db.get(key)
+func (db *Db) Exist(key *StrObject) bool {
+	value := db.Get(key)
 	return value != nil
 }
 
-func (db *Db) size() int64 {
+func (db *Db) Size() int64 {
 	return int64(len(db.Dict))
 }
 
-func (db *Db) empty() {
+func (db *Db) FlushAll() {
 	db.Dict = make(map[*StrObject] IObject)
 }
 
