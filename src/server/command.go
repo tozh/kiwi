@@ -14,7 +14,7 @@ import (
 func (s *Server) SetCommand(c *Client) {
 	flags := OBJ_SET_NO_FLAGS
 	for j:=int64(3); j<c.Argc;j++ {
-		a := strings.ToUpper(*c.Argv[j].(*StrObject).Value)
+		a := strings.ToUpper(c.Argv[j])
 
 		if a == "NX" && (flags & OBJ_SET_XX) != 0 {
 			flags |= OBJ_SET_NX
@@ -26,17 +26,17 @@ func (s *Server) SetCommand(c *Client) {
 		}
 		// expire is not implemented now, so end here
 	}
-
-	c.Argv[2] = TryObjectEncoding(s, c.Argv[2])
-	s.SetGenericCommand(c, int64(flags), c.Argv[1], c.Argv[2])
+	valueStrObject := CreateStrObjectByStr(s, c.Argv[2])
+	s.SetGenericCommand(c, int64(flags), c.Argv[1], valueStrObject)
 }
 
-func (s *Server) SetGenericCommand(c *Client, flags int64, key IObject, value IObject) {
-	if (flags & OBJ_SET_NX != 0 && c.Db.Exist(key.(*StrObject))) ||
-		(flags & OBJ_SET_XX != 0 && !c.Db.Exist(key.(*StrObject))) {
+func (s *Server) SetGenericCommand(c *Client, flags int64, key string, value *StrObject) {
+	if (flags & OBJ_SET_NX != 0 && c.Db.Exist(key)) ||
+		(flags & OBJ_SET_XX != 0 && !c.Db.Exist(key)) {
 			// addReply
 			return
 	}
+	value = StrObjectEncode(s, value)
 	c.Db.Set(key, value)
 	s.Dirty++
 
@@ -46,22 +46,43 @@ func (s *Server) SetGenericCommand(c *Client, flags int64, key IObject, value IO
 }
 
 func (s *Server) SetNxCommand(c *Client) {
-	c.Argv[2] = TryObjectEncode(s, c.Argv[2])
-	s.SetGenericCommand(c, OBJ_SET_NX, c.Argv[1], c.Argv[2])
+	valueStrObject := CreateStrObjectByStr(s, c.Argv[2])
+	s.SetGenericCommand(c, OBJ_SET_NX, c.Argv[1], valueStrObject)
 }
 
 func (s *Server) FlushAllCommand(c *Client) {
-	c.Db.FlushAll()
-	// addReply
+	if s.ConfigFlushAll {
+		c.Db.FlushAll()
+		// addReply
+	} else {
+		// addReplyError(c, "cannot flush all")
+	}
 }
 
 func (s *Server) ExistCommand(c *Client) {
 	c.Db.Exist(c.Argv[1])
 	// expire
-	// addReply
+	// addReply()
 }
 
-func (s *Server) incr
+func (s *Server) IncrDecrCommand(c *Client, incr int64) {
+	o := c.Db.Get(c.Argv[1]).(*StrObject)
+	if o == nil {
+		o = CreateStrObjectByInt64(s, incr)
+		c.Db.Set(c.Argv[1], o)
+	}
+	if !(o.RType == OBJ_RTYPE_STR && o.Encoding == OBJ_ENCODING_INT) {
+		return
+	}
+	value := *o.Value.(*int64)
+	oldValue := value
+	value += incr
+	if IsOverflowInt64(oldValue, incr) {
+		// addReplyError(c, "increment or decrement would overflow")
+		return
+	}
+	ReplaceStrObjectByInt64(s, o, oldValue, value)
+}
 
 
 

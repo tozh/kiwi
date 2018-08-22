@@ -1,74 +1,90 @@
 package object
 
 import (
-	. "redigo/src/structure"
 	. "redigo/src/constant"
 	."redigo/src/server"
 	"strconv"
+	"math"
 )
+
 
 type StrObject struct {
 	Object
-	Value *string
+	Value interface{}
 }
 
-func (strObj *StrObject) getValue() string {
-	return *strObj.Value
+func IsSharedInt64(i int64) bool {
+	return 0 <= i && i < SHARED_INTEGERS
 }
 
-func (strObj *StrObject) setValue(str string) bool {
-	strObj.Value = &str
-	strObj.setRType(OBJ_RTYPE_STR)
-	return true
+func IsOverflowInt64(oldValue int64, incr int64) bool{
+	return (incr < 0 && oldValue < 0 && incr < math.MinInt64 - oldValue) ||
+		(incr > 0 && oldValue > 0 && incr > math.MaxInt64 - oldValue)
 }
 
-func (strObj *StrObject) getGetValueFunc() interface{} {
-	return strObj.getValue
+func CreateStrObjectByStr(s *Server, str string) *StrObject {
+	obj := createObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_STR)
+	o := StrObject {
+		Object:obj,
+		Value:&str,
+	}
+	return StrObjectEncode(s, &o)
 }
 
-func (strObj *StrObject) getSetValueFunc() interface{} {
-	return strObj.setValue
-}
-
-func TryObjectEncode(s *Server, o IObject) IObject {
-	if o.getEncode() != OBJ_ENCODING_STR {
+func CreateStrObjectByInt64(s *Server, i int64) *StrObject {
+	if IsSharedInt64(i) {
+		o := s.Shared.Integers[i]
+		o.IncrRefCount()
 		return o
 	}
-	if o.getRefCount() > 1 {
+	obj := createObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_INT)
+	o := StrObject {
+		Object:obj,
+		Value:&i,
+	}
+	return &o
+}
+
+func ReplaceStrObjectByInt64(s *Server, o *StrObject, oldValue int64, newValue int64) *StrObject {
+	if !IsSharedInt64(oldValue) && !IsSharedInt64(newValue) {
+		o.Value = &newValue
+		o.RefreshLRUClock(s)
+		return o
+	} else {
+		o.DecrRefCount()
+		return CreateStrObjectByInt64(s, newValue)
+	}
+
+}
+
+func StrObjectEncode(s *Server, o *StrObject) *StrObject {
+	if o.Encoding != OBJ_ENCODING_STR || o.RefConut > 1 {
 		return o
 	}
-	value, err := strconv.ParseInt(*o.(*StrObject).Value, 10, 64)
-	if err != nil {
-		if value >= 0 && value < SHARED_INTEGERS {
-			o.decrRefCount()
-			s.Shared.Integers[value].incrRefCount()
-			return s.Shared.Integers[value]
+
+	str := *o.Value.(*string)
+	i, err := strconv.ParseInt(str, 10, 64)
+	if err == nil {
+		if IsSharedInt64(i) {
+			o.DecrRefCount()
+			s.Shared.Integers[i].IncrRefCount()
+			return s.Shared.Integers[i]
 		} else {
-			return StrObjectToIntObject(o.(*StrObject), value)
+			o.Value = &i
+			o.Encoding = OBJ_ENCODING_INT
 		}
 	}
 	return o
 }
 
-
-func StrObjectToIntObject(o *StrObject, value int64) *IntObject{
-	return &IntObject{
-		Object {
-			OBJ_RTYPE_INT,
-			OBJ_ENCODING_INT,
-			o.Lru,
-			o.RefConut,
-		},
-		&value,
-	}
-}
-
 /* Get a decoded version of an encoded object (returned as a new object).
  * If the object is already raw-encoded just increment the ref count. */
-func ObjectDecode(s *Server, o IObject) IObject {
-	if o.isStr() {
-		o.incrRefCount()
-		return o
+func StrObjectDecode(s *Server, o *StrObject) *StrObject {
+	if o.RType == OBJ_RTYPE_STR && o.Encoding == OBJ_ENCODING_INT {
+		str := strconv.FormatInt(*o.Value.(*int64), 10)
+		return CreateStrObjectByStr(s, str)
 	}
-	if
+	o.IncrRefCount()
+	return o
 }
+

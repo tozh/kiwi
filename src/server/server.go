@@ -36,8 +36,7 @@ type RedisCommand struct {
 }
 
 type SharedObjects struct {
-	Integers [constant.SHARED_INTEGERS]IObject
-
+	Integers [constant.SHARED_INTEGERS]*StrObject
 }
 
 type Client struct {
@@ -48,7 +47,7 @@ type Client struct {
 	QueryBuf string // buffer use to accumulate client query
 	QueryBufPeak int64
 	Argc int64       // count of arguments
-	Argv []IObject // arguments of current command
+	Argv []string // arguments of current command
 	Cmd *RedisCommand
 	LastCmd *RedisCommand
 	Reply *List
@@ -147,6 +146,8 @@ type Server struct {
 	//ZSetMaxZiplistvalue int64
 
 	Shared SharedObjects
+
+	ConfigFlushAll bool
 }
 
 
