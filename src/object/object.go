@@ -8,9 +8,6 @@ import (
 	"math"
 )
 
-type RInt64 int64
-type RString string
-
 type Object struct {
 	RType int64
 	Encoding int64
@@ -57,10 +54,6 @@ type IObject interface {
 	IncrRefCount() int64
 	DecrRefCount() int64
 	RefreshLRUClock(s *Server)
-	//getGetValueFunc() interface{}
-	//getSetValueFunc() interface{}
-	//isStr() bool
-	//getCreateFunc()
 }
 
 func (o *Object) getRType() int64 {
@@ -154,55 +147,9 @@ func (o *Object) DecrRefCount() int64 {
 	return o.RefConut
 }
 
-
-func (o *Object) isStr() bool {
-	return o.getRType() == OBJ_RTYPE_STR &&o.getEncode() == OBJ_ENCODING_STR
-}
-
-func (o *Object) isInt() bool {
-	return o.getRType() == OBJ_RTYPE_INT && o.getEncode() == OBJ_ENCODING_INT
-}
-
 func (o *Object) RefreshLRUClock(s *Server) {
 	o.Lru = LRUClock(s)
 }
-
-//
-//func (listObj *ListObject) getValue() interface{} {
-//	return listObj.Value
-//}
-//
-//func (zsetObj *ZSetObject) getValue() interface{} {
-//	return zsetObj.Value
-//}
-//
-//func (hashObj *HashObject) getValue() interface{} {
-//	return hashObj.Value
-//}
-//
-//func (setObj *SetObject) getValue() interface{} {
-//	return setObj.Value
-//}
-//
-//func (strObj *StrObject) setValue(str string) bool {
-//	strObj.Value
-//}
-//
-//func (listObj *ListObject) setValue() bool {
-//	return listObj.Value
-//}
-//
-//func (zsetObj *ZSetObject) setValue() bool {
-//	return zsetObj.Value
-//}
-//
-//func (hashObj *HashObject) setValue() bool {
-//	return hashObj.Value
-//}
-//
-//func (setObj *SetObject) setValue() bool {
-//	return setObj.Value
-//}
 
 /* functions for Objects */
 func createObject(s *Server, rtype int64, encoding int64,) Object{
@@ -229,5 +176,8 @@ func SimpleGetLRUClock() int64 {
 	return mstime / LRU_CLOCK_RESOLUTION & LRU_CLOCK_MAX
 }
 
+func CheckRType(o IObject, rtype int64) bool {
+	return o.(*Object).RType == rtype
+}
 
 

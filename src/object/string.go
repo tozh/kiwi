@@ -35,6 +35,7 @@ func CatString(a string, b string) string{
 
 }
 
+
 func IsStrObjectInt64(o *StrObject) bool {
 	return o != nil && o.RType == OBJ_RTYPE_STR && o.Encoding == OBJ_ENCODING_INT
 }
@@ -104,9 +105,12 @@ func AppendStrObject(s *Server, o *StrObject, b string) *StrObject {
 	}
 	if IsStrObjectInt64(o) {
 		str := strconv.FormatInt(*o.Value.(*int64), 10)
-		
+		str = CatString(str, b)
+		o.Value = &str
+		o.setEncode(OBJ_ENCODING_STR)
 	}
-	StrObjectEncode(s, )
+
+	return StrObjectEncode(s, o)
 }
 
 
@@ -123,7 +127,7 @@ func StrObjectEncode(s *Server, o *StrObject) *StrObject {
 			return s.Shared.Integers[i]
 		} else {
 			o.Value = &i
-			o.Encoding = OBJ_ENCODING_INT
+			o.setEncode(OBJ_ENCODING_INT)
 		}
 	}
 	return o

@@ -12,6 +12,22 @@ import (
 // XX - exist
 // EX - expire in seconds
 // PX - expire in milliseconds
+
+func (s *Server) SetGenericCommand(c *Client, flags int64, key string) {
+	if (flags & OBJ_SET_NX != 0 && c.Db.Exist(key)) ||
+		(flags & OBJ_SET_XX != 0 && !c.Db.Exist(key)) {
+		// addReply
+		return
+	}
+	o := CreateStrObjectByStr(s, c.Argv[2])
+	c.Db.Set(key, o)
+	s.Dirty++
+
+	//if expire
+
+	// addReply
+}
+
 func (s *Server) SetCommand(c *Client) {
 	flags := OBJ_SET_NO_FLAGS
 	for j:=int64(3); j<c.Argc;j++ {
@@ -27,28 +43,12 @@ func (s *Server) SetCommand(c *Client) {
 		}
 		// expire is not implemented now, so end here
 	}
-	valueStrObject := CreateStrObjectByStr(s, c.Argv[2])
-	s.SetGenericCommand(c, int64(flags), c.Argv[1], valueStrObject)
-}
 
-func (s *Server) SetGenericCommand(c *Client, flags int64, key string, value *StrObject) {
-	if (flags & OBJ_SET_NX != 0 && c.Db.Exist(key)) ||
-		(flags & OBJ_SET_XX != 0 && !c.Db.Exist(key)) {
-			// addReply
-			return
-	}
-	value = StrObjectEncode(s, value)
-	c.Db.Set(key, value)
-	s.Dirty++
-
-	//if expire
-
-	// addReply
+	s.SetGenericCommand(c, int64(flags), c.Argv[1])
 }
 
 func (s *Server) SetNxCommand(c *Client) {
-	valueStrObject := CreateStrObjectByStr(s, c.Argv[2])
-	s.SetGenericCommand(c, OBJ_SET_NX, c.Argv[1], valueStrObject)
+	s.SetGenericCommand(c, OBJ_SET_NX, c.Argv[1])
 }
 
 func (s *Server) FlushAllCommand(c *Client) {
@@ -129,7 +129,11 @@ func (s *Server) AppendCommand(c *Client) {
 		o = CreateStrObjectByStr(s, c.Argv[2])
 		c.Db.Set(c.Argv[1], o)
 	} else {
-
+		if !CheckRType(o, OBJ_RTYPE_STR) {
+			return
+		}
+		AppendStrObject(s, o, c.Argv[2])
+		// addReply()
 	}
 }
 
