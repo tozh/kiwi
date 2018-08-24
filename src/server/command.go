@@ -4,6 +4,7 @@ import (
 	."redigo/src/object"
 	."redigo/src/constant"
 	"strings"
+	"strconv"
 )
 
 /* SET key value [NX] [XX] [EX <seconds>] [PX <milliseconds>] */
@@ -71,7 +72,7 @@ func (s *Server) IncrDecrCommand(c *Client, incr int64) {
 		o = CreateStrObjectByInt64(s, incr)
 		c.Db.Set(c.Argv[1], o)
 	}
-	if !(o.RType == OBJ_RTYPE_STR && o.Encoding == OBJ_ENCODING_INT) {
+	if !IsStrObjectInt64(o) {
 		return
 	}
 	value := *o.Value.(*int64)
@@ -81,8 +82,58 @@ func (s *Server) IncrDecrCommand(c *Client, incr int64) {
 		// addReplyError(c, "increment or decrement would overflow")
 		return
 	}
-	ReplaceStrObjectByInt64(s, o, oldValue, value)
+	ReplaceStrObjectByInt64(s, o, &oldValue, &value)
 }
+
+func (s *Server) IncrCommand(c *Client) {
+	s.IncrDecrCommand(c, 1)
+}
+
+func (s *Server) DecrCommand(c *Client) {
+	s.IncrDecrCommand(c, -1)
+}
+
+func (s *Server) IncrByCommand(c *Client) {
+	incr, err := strconv.ParseInt(c.Argv[2], 10, 64)
+	if err != nil {
+		return
+	}
+	s.IncrDecrCommand(c, incr)
+}
+
+func (s *Server) DecrByCommand(c *Client) {
+	decr, err := strconv.ParseInt(c.Argv[2], 10, 64)
+	if err != nil {
+		return
+	}
+	s.IncrDecrCommand(c, -decr)
+}
+
+func (s *Server) StrLenCommand(c *Client) {
+	o := c.Db.Get(c.Argv[1]).(*StrObject)
+	if o == nil {
+		return
+	}
+	//str, err := GetStrObjectValueString(o)
+	_, err := GetStrObjectValueString(o)
+	if err == nil {
+		return
+	}
+	// addReply(len(str))
+}
+
+// Cat strings
+func (s *Server) AppendCommand(c *Client) {
+	o := c.Db.Get(c.Argv[1]).(*StrObject)
+	if o == nil {
+		o = CreateStrObjectByStr(s, c.Argv[2])
+		c.Db.Set(c.Argv[1], o)
+	} else {
+
+	}
+}
+
+
 
 
 

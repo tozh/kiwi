@@ -5,6 +5,8 @@ import (
 	."redigo/src/server"
 	"strconv"
 	"math"
+	"errors"
+	"bytes"
 )
 
 
@@ -20,6 +22,42 @@ func IsSharedInt64(i int64) bool {
 func IsOverflowInt64(oldValue int64, incr int64) bool{
 	return (incr < 0 && oldValue < 0 && incr < math.MinInt64 - oldValue) ||
 		(incr > 0 && oldValue > 0 && incr > math.MaxInt64 - oldValue)
+}
+
+func CatString(a string, b string) string{
+	if b == "" {
+		return a
+	}
+	buf := bytes.Buffer{}
+	buf.WriteString(a)
+	buf.WriteString(b)
+	return buf.String()
+
+}
+
+func IsStrObjectInt64(o *StrObject) bool {
+	return o != nil && o.RType == OBJ_RTYPE_STR && o.Encoding == OBJ_ENCODING_INT
+}
+
+func IsStrObjectString(o *StrObject) bool {
+	return o != nil && o.RType == OBJ_RTYPE_STR && o.Encoding == OBJ_ENCODING_STR
+}
+
+func GetStrObjectValueInt64(o *StrObject) (int64, error) {
+	if IsStrObjectInt64(o) {
+		return *o.Value.(*int64), nil
+	}
+	return 0, errors.New("not int64 StrObject")
+}
+
+func GetStrObjectValueString(o *StrObject) (string, error) {
+	if IsStrObjectString(o) {
+		return *o.Value.(*string), nil
+	}
+	if IsStrObjectInt64(o) {
+		return strconv.FormatInt(*o.Value.(*int64), 10), nil
+	}
+	return "", errors.New("not StrObject")
 }
 
 func CreateStrObjectByStr(s *Server, str string) *StrObject {
@@ -45,25 +83,39 @@ func CreateStrObjectByInt64(s *Server, i int64) *StrObject {
 	return &o
 }
 
-func ReplaceStrObjectByInt64(s *Server, o *StrObject, oldValue int64, newValue int64) *StrObject {
-	if !IsSharedInt64(oldValue) && !IsSharedInt64(newValue) {
-		o.Value = &newValue
+func ReplaceStrObjectByInt64(s *Server, o *StrObject, oldValue *int64, newValue *int64) *StrObject {
+	if !IsSharedInt64(*oldValue) && !IsSharedInt64(*newValue) {
+		o.Value = newValue
 		o.RefreshLRUClock(s)
 		return o
 	} else {
 		o.DecrRefCount()
-		return CreateStrObjectByInt64(s, newValue)
+		return CreateStrObjectByInt64(s, *newValue)
 	}
-
 }
 
+func AppendStrObject(s *Server, o *StrObject, b string) *StrObject {
+	if b == "" {
+		return o
+	}
+	if IsStrObjectString(o) {
+		str := CatString(*o.Value.(*string), b)
+		o.Value = &str
+	}
+	if IsStrObjectInt64(o) {
+		str := strconv.FormatInt(*o.Value.(*int64), 10)
+		
+	}
+	StrObjectEncode(s, )
+}
+
+
 func StrObjectEncode(s *Server, o *StrObject) *StrObject {
-	if o.Encoding != OBJ_ENCODING_STR || o.RefConut > 1 {
+	if !IsStrObjectString(o) || o.RefConut > 1 {
 		return o
 	}
 
-	str := *o.Value.(*string)
-	i, err := strconv.ParseInt(str, 10, 64)
+	i, err := strconv.ParseInt(*o.Value.(*string), 10, 64)
 	if err == nil {
 		if IsSharedInt64(i) {
 			o.DecrRefCount()
@@ -80,11 +132,10 @@ func StrObjectEncode(s *Server, o *StrObject) *StrObject {
 /* Get a decoded version of an encoded object (returned as a new object).
  * If the object is already raw-encoded just increment the ref count. */
 func StrObjectDecode(s *Server, o *StrObject) *StrObject {
-	if o.RType == OBJ_RTYPE_STR && o.Encoding == OBJ_ENCODING_INT {
+	if IsStrObjectInt64(o) {
 		str := strconv.FormatInt(*o.Value.(*int64), 10)
 		return CreateStrObjectByStr(s, str)
 	}
-	o.IncrRefCount()
 	return o
 }
 
