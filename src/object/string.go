@@ -35,7 +35,6 @@ func CatString(a string, b string) string{
 
 }
 
-
 func IsStrObjectInt64(o *StrObject) bool {
 	return o != nil && o.RType == OBJ_RTYPE_STR && o.Encoding == OBJ_ENCODING_INT
 }
