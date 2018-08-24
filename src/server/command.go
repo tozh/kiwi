@@ -12,7 +12,6 @@ import (
 // XX - exist
 // EX - expire in seconds
 // PX - expire in milliseconds
-
 func (s *Server) SetGenericCommand(c *Client, flags int64, key string) {
 	if (flags & OBJ_SET_NX != 0 && c.Db.Exist(key)) ||
 		(flags & OBJ_SET_XX != 0 && !c.Db.Exist(key)) {
@@ -51,6 +50,10 @@ func (s *Server) SetNxCommand(c *Client) {
 	s.SetGenericCommand(c, OBJ_SET_NX, c.Argv[1])
 }
 
+func (s *Server) SetXxCommand(c *Client) {
+	s.SetGenericCommand(c, OBJ_SET_XX, c.Argv[1])
+}
+
 func (s *Server) FlushAllCommand(c *Client) {
 	if s.ConfigFlushAll {
 		c.Db.FlushAll()
@@ -60,11 +63,11 @@ func (s *Server) FlushAllCommand(c *Client) {
 	}
 }
 
-func (s *Server) ExistCommand(c *Client) {
-	c.Db.Exist(c.Argv[1])
-	// expire
-	// addReply()
-}
+//func (s *Server) ExistCommand(c *Client) {
+//	c.Db.Exist(c.Argv[1])
+//	// expire
+//	// addReply()
+//}
 
 func (s *Server) IncrDecrCommand(c *Client, incr int64) {
 	o := c.Db.Get(c.Argv[1]).(*StrObject)
@@ -110,12 +113,12 @@ func (s *Server) DecrByCommand(c *Client) {
 }
 
 func (s *Server) StrLenCommand(c *Client) {
-	o := c.Db.Get(c.Argv[1]).(*StrObject)
+	o := s.DbGetOrReply(c, c.Argv[1], s.Shared.NullBulk)
 	if o == nil {
 		return
 	}
 	//str, err := GetStrObjectValueString(o)
-	_, err := GetStrObjectValueString(o)
+	_, err := GetStrObjectValueString(o.(*StrObject))
 	if err == nil {
 		return
 	}
@@ -137,7 +140,89 @@ func (s *Server) AppendCommand(c *Client) {
 	}
 }
 
+func (s *Server) DbGetOrReply(c *Client, key string, reply *StrObject) IObject{
+	o := c.Db.Get(c.Argv[1])
+	if o == nil {
+		//addReply
+	}
+	return o
+}
 
+func (s *Server) GetGenericCommand(c *Client) int64 {
+	o := s.DbGetOrReply(c, c.Argv[1], s.Shared.NullBulk)
+	if o == nil {
+		return COMMAND_OK
+	}
+	if !CheckRType(o, OBJ_RTYPE_STR) {
+		// addReply(c, s.Shared.WrongType)
+		return COMMAND_ERR
+	} else {
+		// addReply
+		return COMMAND_OK
+	}
+}
 
+func (s *Server) GetCommand(c *Client) {
+	s.GetGenericCommand(c)
+}
 
+func (s *Server) GetSetCommand(c *Client) {
+	if s.GetGenericCommand(c) == COMMAND_ERR {
+		return
+	}
+	o := CreateStrObjectByStr(s, c.Argv[2])
+	c.Db.Set(c.Argv[1], o)
+	s.Dirty++
+}
+
+func (s *Server) MSetGenericCommand(c *Client, flags int64) {
+	if c.Argc % 2 == 0 {
+		// addReplyError(c,"wrong number of arguments for MSET")
+		return
+	}
+	// check the nx flag
+	// The MSETNX sematic is to return zero and set nothing if one of keys exists
+	existKeyCount := 0
+	if flags & OBJ_SET_NX != 0 {
+		for j:=1; j<len(c.Argv); j+=2 {
+			if c.Db.Exist(c.Argv[j]) {
+				existKeyCount++
+			}
+		}
+		if existKeyCount != 0 {
+			// addReply(c, s.Shared.CommandZero)
+			return
+		}
+	}
+	for j:=1;j<len(c.Argv); j+=2 {
+		o := CreateStrObjectByStr(s, c.Argv[j+1])
+		c.Db.Set(c.Argv[j], o)
+	}
+	s.Dirty += (c.Argc - 1) / 2
+	// addReply(c, s.Shared.CommandOne)
+}
+
+func (s *Server) MSetCommand(c *Client) {
+	s.MSetGenericCommand(c, OBJ_SET_NO_FLAGS)
+}
+
+func (s *Server) MSetNxCommand(c *Client) {
+	s.MSetGenericCommand(c, OBJ_SET_NX)
+}
+
+func MGetCommand(c *Client) {
+	// addReplyMultBulk()...
+	for j:=1; j<len(c.Argv); j++ {
+		o := c.Db.Get(c.Argv[j])
+		if o == nil {
+			// addReply(c, s.Shared.NullBulk)
+		} else {
+			if !CheckRType(o, OBJ_RTYPE_STR) {
+				// addReply(c, s.Shared.NullBulk)
+			} else {
+				// addReplyBulk(c, o)
+			}
+		}
+	}
+}
 

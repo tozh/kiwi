@@ -4,7 +4,6 @@ import (
 	. "redigo/src/structure"
 	. "redigo/src/db"
 	. "redigo/src/object"
-	"redigo/src/constant"
 )
 
 //type Object struct {
@@ -33,10 +32,6 @@ type RedisCommand struct {
 	KeyStep int64
 	Msec int64
 	Calls int64
-}
-
-type SharedObjects struct {
-	Integers [constant.SHARED_INTEGERS]*StrObject
 }
 
 type Client struct {

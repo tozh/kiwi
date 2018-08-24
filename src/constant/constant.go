@@ -44,3 +44,6 @@ const OBJ_SET_EX = 1<<2     /* Set if time in seconds is given */
 const OBJ_SET_PX = 1<<3     /* Set if time in ms in given */
 
 const SHARED_INTEGERS = 10000
+
+const COMMAND_OK = 0
+const COMMAND_ERR = 1
