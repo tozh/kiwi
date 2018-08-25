@@ -1,9 +1,11 @@
 package server
 
 import (
-	. "redigo/src/structure"
-	. "redigo/src/db"
-	. "redigo/src/object"
+	."redigo/src/structure"
+	."redigo/src/db"
+	."redigo/src/object"
+	."redigo/src/constant"
+	"sync"
 )
 
 //type Object struct {
@@ -34,24 +36,6 @@ type RedisCommand struct {
 	Calls int64
 }
 
-type Client struct {
-	Id int64
-	Fd int64
-	Db *Db
-	Name string
-	QueryBuf string // buffer use to accumulate client query
-	QueryBufPeak int64
-	Argc int64       // count of arguments
-	Argv []string // arguments of current command
-	Cmd *RedisCommand
-	LastCmd *RedisCommand
-	Reply *List
-	ReplySize int64
-	SentSize int64 // Amount of bytes already sent in the current buffer or object being sent.
-	CreateTime int64
-	LastInteraction  int64
-}
-
 type Op struct {
 	Argc int64       // count of arguments
 	Argv []string // arguments of current command
@@ -60,14 +44,6 @@ type Op struct {
 	Cmd *RedisCommand
 }
 
-//type RDBSaveInfo struct {
-//	ReplStreamDb int64
-//	ReplIdIsSet bool
-//	ReplId string
-//	ReplOffset int64
-//}
-
-
 type Server struct {
 	Pid int64
 	PidFile string
@@ -75,8 +51,8 @@ type Server struct {
 	ExecFile string
 	ExecArgv []string
 	Hz int64		// serverCron() calls frequency in hertz
-	Db *Db
-
+	Dbs []*Db
+	DbNum int64
 	Commands map[interface{}]RedisCommand
 	OrigCommands map[interface{}]RedisCommand
 
@@ -86,7 +62,7 @@ type Server struct {
 	CronLoops int64
 
 	LoadModuleQueue *List  // List of modules to load at startup.
-
+	NextClientId int64
 
 	// Network
 	Port int64  // TCP listening port
@@ -145,6 +121,25 @@ type Server struct {
 	ConfigFlushAll bool
 }
 
+func (s *Server) SelectDB(c *Client, id int64) int64 {
+	if id < 0 || id >= s.DbNum {
+		return COMMAND_ERR
+	}
+	c.Db = s.Dbs[id]
+	return COMMAND_OK
+}
+
+func (s *Server) GetNextClientId(c *Client) {
+	mutex := sync.Mutex{}
+	getlock := false
+	for !getlock {
+		mutex.Lock()
+		c.Id = s.NextClientId
+		s.NextClientId++
+		getlock = true
+	}
+	defer mutex.Unlock()
+}
 
 
 
