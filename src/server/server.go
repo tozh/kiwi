@@ -119,6 +119,7 @@ type Server struct {
 	Shared SharedObjects
 
 	ConfigFlushAll bool
+	mutex sync.Mutex
 }
 
 func (s *Server) SelectDB(c *Client, id int64) int64 {
@@ -130,15 +131,10 @@ func (s *Server) SelectDB(c *Client, id int64) int64 {
 }
 
 func (s *Server) GetNextClientId(c *Client) {
-	mutex := sync.Mutex{}
-	getlock := false
-	for !getlock {
-		mutex.Lock()
-		c.Id = s.NextClientId
-		s.NextClientId++
-		getlock = true
-	}
-	defer mutex.Unlock()
+	s.mutex.Lock()
+	c.Id = s.NextClientId
+	s.NextClientId++
+	s.mutex.Unlock()
 }
 
 
