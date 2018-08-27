@@ -177,7 +177,7 @@ func SimpleGetLRUClock() int64 {
 }
 
 func CheckRType(o IObject, rtype int64) bool {
-	return o.(*Object).RType == rtype
+	return o != nil && o.(*Object).RType == rtype
 }
 
 

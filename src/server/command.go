@@ -72,20 +72,20 @@ func (s *Server) FlushAllCommand(c *Client) {
 func (s *Server) IncrDecrCommand(c *Client, incr int64) {
 	o := c.Db.Get(c.Argv[1]).(*StrObject)
 	if o == nil {
-		o = CreateStrObjectByInt64(s, incr)
+		o = CreateStrObjectByInt(s, incr)
 		c.Db.Set(c.Argv[1], o)
 	}
-	if !IsStrObjectInt64(o) {
+	if !IsStrObjectInt(o) {
 		return
 	}
 	value := *o.Value.(*int64)
 	oldValue := value
 	value += incr
-	if IsOverflowInt64(oldValue, incr) {
+	if IsOverflowInt(oldValue, incr) {
 		// addReplyError(c, "increment or decrement would overflow")
 		return
 	}
-	ReplaceStrObjectByInt64(s, o, &oldValue, &value)
+	ReplaceStrObjectByInt(s, o, &oldValue, &value)
 }
 
 func (s *Server) IncrCommand(c *Client) {
@@ -151,14 +151,14 @@ func (s *Server) DbGetOrReply(c *Client, key string, reply *StrObject) IObject{
 func (s *Server) GetGenericCommand(c *Client) int64 {
 	o := s.DbGetOrReply(c, c.Argv[1], s.Shared.NullBulk)
 	if o == nil {
-		return COMMAND_OK
+		return C_OK
 	}
 	if !CheckRType(o, OBJ_RTYPE_STR) {
 		// addReply(c, s.Shared.WrongType)
-		return COMMAND_ERR
+		return C_ERR
 	} else {
 		// addReply
-		return COMMAND_OK
+		return C_OK
 	}
 }
 
@@ -167,7 +167,7 @@ func (s *Server) GetCommand(c *Client) {
 }
 
 func (s *Server) GetSetCommand(c *Client) {
-	if s.GetGenericCommand(c) == COMMAND_ERR {
+	if s.GetGenericCommand(c) == C_ERR {
 		return
 	}
 	o := CreateStrObjectByStr(s, c.Argv[2])

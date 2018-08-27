@@ -6,6 +6,9 @@ import (
 	."redigo/src/object"
 	."redigo/src/constant"
 	"sync"
+	"fmt"
+	"strconv"
+	"bytes"
 )
 
 //type Object struct {
@@ -56,6 +59,7 @@ type Server struct {
 	Commands map[interface{}]RedisCommand
 	OrigCommands map[interface{}]RedisCommand
 
+	UnixTimeInMs int64 // UnixTime in millisecond
 	LruClock int64 // Clock for LRU eviction
 	ShutdownNeedAsap bool
 
@@ -71,6 +75,8 @@ type Server struct {
 	IpFileDesc []string  // TCP socket file descriptors
 	SocketFileDesc string // Unix socket file descriptor
 	Clients *List  // List of active clients
+	ClientsToClose *List  // Clients to close asynchronously
+	ClientsPendingWrite *List  // There is to write or install handler.
 	//clientsToClose *List  // Clients to close asynchronously
 
 	//Loading bool  // Server is loading date from disk if true
@@ -122,20 +128,173 @@ type Server struct {
 	mutex sync.Mutex
 }
 
-func (s *Server) SelectDB(c *Client, id int64) int64 {
-	if id < 0 || id >= s.DbNum {
-		return COMMAND_ERR
+func (s *Server) CreateClient(fd int64) *Client {
+	createTime := s.UnixTimeInMs
+	var c = Client{
+		Id: 0,
+		Fd: 0,
+		Name: "",
+		QueryBuf: "",
+		QueryBufPeak: 0,
+		Argc: 0,       // count of arguments
+		Argv: make([]string, 5), // arguments of current command
+		Cmd: nil,
+		LastCmd: nil,
+		Reply: ListCreate(),
+		ReplySize: 0,
+		SentSize: 0, // Amount of bytes already sent in the current buffer or object being sent.
+		CreateTime: createTime,
+		LastInteraction: createTime,
+		Buf: make([]byte, PROTO_REPLY_CHUNK_BYTES),
+		BufPos:0,
+		SentLen:0,
+		Flags: 0,
 	}
-	c.Db = s.Dbs[id]
-	return COMMAND_OK
+	c.GetNextClientId(s)
+	c.SelectDB(s, 0)
+	return &c
 }
 
-func (s *Server) GetNextClientId(c *Client) {
-	s.mutex.Lock()
-	c.Id = s.NextClientId
-	s.NextClientId++
-	s.mutex.Unlock()
+func (s *Server) PrepareClientToWrite(c *Client) int64 {
+	if c.WithFlags(CLIENT_LUA|CLIENT_MODULE) {
+		return C_OK
+	}
+
+	if c.WithFlags(CLIENT_REPLY_OFF|CLIENT_REPLY_SKIP) {
+		return C_ERR
+	}
+
+	if c.WithFlags(CLIENT_MASTER) && !c.WithFlags(CLIENT_MASTER_FORCE_REPLY) {
+		return C_ERR
+	}
+	if c.Fd <= 0 {
+		// Fake client for AOF loading.
+		return C_ERR
+	}
+
+	if !c.HasPendingReplies() && !(c.WithFlags(CLIENT_PENDING_WRITE)) {
+		c.AddFlags(CLIENT_PENDING_WRITE)
+		s.ClientsPendingWrite.ListAddNodeTail(c)
+	}
+	return C_OK
 }
+
+
+func (s *Server) CloseClientAsync(c *Client) {
+	if c.Flags & CLIENT_CLOSE_ASAP != 0 || c.Flags & CLIENT_LUA != 0 {
+		return
+	}
+	c.AddFlags(CLIENT_CLOSE_ASAP)
+	s.ClientsToClose.ListAddNodeTail(c)
+}
+
+
+func (s *Server) AddReply(c *Client, str string) {
+	if s.PrepareClientToWrite(c) != C_OK {
+		return
+	}
+	if c.AddReplyToBuffer(str) != C_OK {
+		c.AddReplyStringToList(str)
+	}
+}
+
+func (s *Server) AddReplyStrObj(c *Client, o *StrObject) {
+	if !CheckRType(o, OBJ_RTYPE_STR) {
+		return
+	}
+	str, err := GetStrObjectValueString(o)
+	if err == nil {
+		s.AddReply(c, str)
+	} else {
+		return
+	}
+}
+
+func (s *Server) AddReplyError(c *Client, str string) {
+	if len(str) !=0 || str[0] != '-' {
+		s.AddReply(c, "-ERR ")
+	}
+	s.AddReply(c, str)
+	s.AddReply(c, "\r\n")
+}
+
+func (s *Server) AddReplyErrorFormat(c *Client, format string, a ...interface{}) {
+	str := fmt.Sprintf(format, a)
+	s.AddReplyError(c, str)
+}
+
+func (s *Server) AddReplyStatus(c *Client, str string) {
+	s.AddReply(c, "+")
+	s.AddReply(c, str)
+	s.AddReply(c, "\r\n")
+}
+
+func (s *Server) AddReplyStatusFormat(c *Client, format string, a ...interface{}) {
+	str := fmt.Sprintf(format, a)
+	s.AddReplyStatus(c, str)
+}
+
+//func (s *Server) AddReplyHelp(c *Client, help []string) {
+//	cmd := c.Argv[0]
+//	s.AddReplyStatusFormat(c, "%s <subcommand> arg arg ... arg. Subcommands are:", cmd)
+//	for _, h := range help {
+//		s.AddReplyStatus(c, h)
+//	}
+//}
+
+func (s *Server) AddReplyIntWithPrifix(c *Client, i int64, prefix byte) {
+	/* Things like $3\r\n or *2\r\n are emitted very often by the protocol
+	so we have a few shared objects to use if the integer is small
+	like it is most of the times. */
+	if prefix == '*' && i >= 0 && i < SHARED_BULKHDR_LEN {
+		s.AddReply(c, s.Shared.MultiBulkHDR[i])
+	} else if prefix == '$' && i >= 0 && i < SHARED_BULKHDR_LEN {
+		s.AddReply(c, s.Shared.MultiBulkHDR[i])
+	} else {
+		str := strconv.FormatInt(i, 10)
+		buf := bytes.Buffer{}
+		buf.WriteByte(prefix)
+		buf.WriteString(str)
+		buf.WriteByte('\r')
+		buf.WriteByte('\n')
+		s.AddReply(c, buf.String())
+	}
+}
+
+func (s *Server) AddReplyInt(c *Client, i int64) {
+	if i == 0 {
+		s.AddReply(c, s.Shared.Zero)
+	} else if i == 1 {
+		s.AddReply(c, s.Shared.One)
+	} else {
+		s.AddReplyIntWithPrifix(c, i, ':')
+	}
+}
+
+func (s *Server) AddReplyMultiBulkLength(c *Client, length int64) {
+	s.AddReplyIntWithPrifix(c, length, '*')
+}
+
+/* Create the length prefix of a bulk reply, example: $2234 */
+func (s *Server) AddReplyBulkLengthString(c *Client, str string) {
+	length := int64(len(str))
+	s.AddReplyIntWithPrifix(c, length, '$')
+}
+
+func (s *Server) AddReplyBulkLengthStrObj(c *Client, o *StrObject) {
+	if !CheckRType(o, OBJ_RTYPE_STR) {
+		return
+	}
+	str, err := GetStrObjectValueString(o)
+	if err == nil {
+		s.AddReplyBulkLengthString(c, str)
+	} else {
+		return
+	}
+}
+
+func (s *Server) AddReplyBulk
+
 
 
 
