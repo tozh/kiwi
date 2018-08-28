@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"bytes"
 	"strings"
+	"net"
 )
 
 //type Object struct {
@@ -129,14 +130,11 @@ type Server struct {
 	mutex sync.Mutex
 }
 
-func (s *Server) CreateClient(fd int64) *Client {
-
-
-
+func (s *Server) CreateClient(conn *net.Conn) *Client {
 	createTime := s.UnixTimeInMs
 	var c = Client{
 		Id: 0,
-		Fd: 0,
+		Conn: conn,
 		Name: "",
 		QueryBuf: "",
 		QueryBufPeak: 0,
@@ -171,7 +169,7 @@ func (s *Server) PrepareClientToWrite(c *Client) int64 {
 	if c.WithFlags(CLIENT_MASTER) && !c.WithFlags(CLIENT_MASTER_FORCE_REPLY) {
 		return C_ERR
 	}
-	if c.Fd <= 0 {
+	if c.Conn == nil {
 		// Fake client for AOF loading.
 		return C_ERR
 	}
@@ -323,7 +321,7 @@ func (s *Server) AddReplySubcommandSyntaxError(c *Client) {
 	s.AddReplyErrorFormat(c, "Unknown subcommand or wrong number of arguments for '%s'. Try %s HELP.", cmd, strings.ToUpper(cmd))
 }
 
-func (s *Server) AcceptCommonHandler(fd int64, flags int64, ip string) {
+func (s *Server) AcceptCommonHandler(conn *net.Conn, flags int64, ip string) {
 
 }
 

@@ -96,3 +96,14 @@ const LONG_STR_SIZE    = 21          /* Bytes needed for long -> str + '\0' */
 const REDIS_AUTOSYNC_BYTES = 1024*1024*32 /* fdatasync every 32MB */
 
 const LIMIT_PENDING_QUERYBUF = 4*1024*1024 /* 4mb */
+
+
+/* Networking Constants */
+
+const ANET_OK = 0
+const ANET_ERR = -1
+const ANET_ERR_LEN = 256
+
+/* Flags used with certain functions. */
+const ANET_NONE = 0
+const ANET_IP_ONLY = (1<<0)
