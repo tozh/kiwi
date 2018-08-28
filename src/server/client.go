@@ -9,7 +9,7 @@ import (
 
 type Client struct {
 	Id int64
-	Conn *net.Conn
+	Conn net.Conn
 	Db *Db
 	Name string
 	QueryBuf string // buffer use to accumulate client query

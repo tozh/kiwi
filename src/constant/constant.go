@@ -107,3 +107,5 @@ const ANET_ERR_LEN = 256
 /* Flags used with certain functions. */
 const ANET_NONE = 0
 const ANET_IP_ONLY = (1<<0)
+
+const CONFIG_BINDADDR_MAX = 16

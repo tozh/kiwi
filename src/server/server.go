@@ -72,15 +72,19 @@ type Server struct {
 
 	// Network
 	Port int64  // TCP listening port
-	BindAddr []string
-	UnixSocket string  // UNIX socket path
-	IpFileDesc []string  // TCP socket file descriptors
-	SocketFileDesc string // Unix socket file descriptor
+	BindAddr [CONFIG_BINDADDR_MAX]string
+	BindAddrCount int64 // Number of addresses in server.bindaddr[]
+	UnixSocketPath string  // UNIX socket path
+	//IpFileDesc []string  // TCP socket file descriptors
+	//SocketFileDesc string // Unix socket file descriptor
 	Clients *List  // List of active clients
 	ClientsToClose *List  // Clients to close asynchronously
 	ClientsPendingWrite *List  // There is to write or install handler.
-	//clientsToClose *List  // Clients to close asynchronously
-
+	MaxClients int64
+	StatRejectedConn int64
+	ProtectedMode bool  // Don't accept external connections.
+	Password string
+	RequirePassword bool
 	//Loading bool  // Server is loading date from disk if true
 	//LoadingTotalSize int64
 	//LoadingLoadedSize int64
@@ -130,7 +134,7 @@ type Server struct {
 	mutex sync.Mutex
 }
 
-func (s *Server) CreateClient(conn *net.Conn) *Client {
+func (s *Server) CreateClient(conn net.Conn) *Client {
 	createTime := s.UnixTimeInMs
 	var c = Client{
 		Id: 0,
@@ -155,6 +159,14 @@ func (s *Server) CreateClient(conn *net.Conn) *Client {
 	c.GetNextClientId(s)
 	c.SelectDB(s, 0)
 	return &c
+}
+
+func (s *Server) LinkClient(c *Client) {
+	s.Clients.ListAddNodeTail(c)
+	// store the pointer: Node
+}
+func (s *Server) UnLinkClient(c *Client) {
+	s.Clients.ListDelNode(c)
 }
 
 func (s *Server) PrepareClientToWrite(c *Client) int64 {
@@ -321,9 +333,60 @@ func (s *Server) AddReplySubcommandSyntaxError(c *Client) {
 	s.AddReplyErrorFormat(c, "Unknown subcommand or wrong number of arguments for '%s'. Try %s HELP.", cmd, strings.ToUpper(cmd))
 }
 
-func (s *Server) AcceptCommonHandler(conn *net.Conn, flags int64, ip string) {
+func (s *Server) AcceptUnixConn(conn net.Conn, flags int64) {
+	c := s.CreateClient(conn)
+	if c == nil {
+		conn.Close()
+	}
+	if s.Clients.ListLength() > s.MaxClients {
+		err := []byte("-ERR max number of clients reached\r\n")
+		conn.Write(err)
+		s.StatRejectedConn++
+	}
+	if s.ProtectedMode && s.BindAddrCount == 0 && !s.RequirePassword
 
 }
+
+func (s *Server) AcceptTcpConn(conn net.Conn, flags int64, ip string) {
+
+	c := s.CreateClient(conn)
+	if c == nil {
+		conn.Close()
+	}
+	if s.Clients.ListLength() > s.MaxClients {
+		err := []byte("-ERR max number of clients reached\r\n")
+		conn.Write(err)
+		s.StatRejectedConn++
+	}
+	if s.ProtectedMode && s.BindAddrCount == 0 && !s.RequirePassword && ip != "" {
+		err := []byte(
+			`-DENIED Redis is running in protected mode because protected mode is enabled, no bind address was specified, no authentication password is requested to clients. In this mode 
+connections are only accepted from the loopback interface. 
+
+If you want to connect from external computers to Redis you may adopt one of the following solutions: 
+
+1) Just disable protected mode sending the command 'CONFIG SET protected-mode no' from the loopback interface by connecting to Redis from the same host the server is running, however MAKE SURE Redis is not publicly accessible from internet if you do so. Use CONFIG REWRITE to make this change permanent.
+2) Alternatively you can just disable the protected mode by editing the Redis configuration file, and setting the protectedmode option to 'no', and then restarting the server.
+3) If you started the server manually just for testing, restart it with the '--protected-mode no' option.
+4) Setup a bind address or an authentication password. 
+
+NOTE: You only need to do one of the above things in order for the server to start accepting connections from the outside.\r\n`)
+		conn.Write(err)
+		s.StatRejectedConn++
+	}
+
+	c.AddFlags(0)
+	//s.LinkClient(c)
+
+}
+
+func (s *Server) AcceptCommonHandler(conn net.Conn, flags int64) {
+
+}
+
+
+
+
 
 
 
