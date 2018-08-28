@@ -80,5 +80,12 @@ func (c *Client) AddReplyStringToList(str string) {
 	c.ReplySize += int64(len(str))
 }
 
-
+// functions for client
+func CopyClientOutputBuffer(dst *Client, src *Client) {
+	dst.Reply.ListEmpty()
+	dst.Reply = ListDup(src.Reply)
+	copy(dst.Buf, src.Buf[0:src.BufPos])
+	dst.BufPos = src.BufPos
+	dst.ReplySize = src.ReplySize
+}
 

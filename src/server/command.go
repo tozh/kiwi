@@ -140,7 +140,7 @@ func (s *Server) AppendCommand(c *Client) {
 	}
 }
 
-func (s *Server) DbGetOrReply(c *Client, key string, reply *StrObject) IObject{
+func (s *Server) DbGetOrReply(c *Client, key string, reply string) IObject{
 	o := c.Db.Get(c.Argv[1])
 	if o == nil {
 		//addReply

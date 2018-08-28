@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strconv"
 	"bytes"
+	"strings"
 )
 
 //type Object struct {
@@ -129,6 +130,9 @@ type Server struct {
 }
 
 func (s *Server) CreateClient(fd int64) *Client {
+
+
+
 	createTime := s.UnixTimeInMs
 	var c = Client{
 		Id: 0,
@@ -293,7 +297,37 @@ func (s *Server) AddReplyBulkLengthStrObj(c *Client, o *StrObject) {
 	}
 }
 
-func (s *Server) AddReplyBulk
+func (s *Server) AddReplyBulk(c *Client, o *StrObject) {
+	s.AddReplyBulkLengthStrObj(c, o)
+	s.AddReplyStrObj(c, o)
+	s.AddReply(c, s.Shared.Crlf)
+}
+
+func (s *Server) AddReplyBulkString(c *Client, str string) {
+	if str == "" {
+		s.AddReply(c, s.Shared.NullBulk)
+	} else {
+		s.AddReplyBulkLengthString(c, str)
+		s.AddReply(c, str)
+		s.AddReply(c, s.Shared.Crlf)
+	}
+}
+
+func (s *Server) AddReplyBulkInt(c *Client, i int64) {
+	str := strconv.FormatInt(i, 10)
+	s.AddReplyBulkString(c, str)
+}
+
+func (s *Server) AddReplySubcommandSyntaxError(c *Client) {
+	cmd := c.Argv[0]
+	s.AddReplyErrorFormat(c, "Unknown subcommand or wrong number of arguments for '%s'. Try %s HELP.", cmd, strings.ToUpper(cmd))
+}
+
+func (s *Server) AcceptCommonHandler(fd int64, flags int64, ip string) {
+
+}
+
+
 
 
 
