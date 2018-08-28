@@ -65,13 +65,14 @@ func AnetListenUnix(err *string, address string) *net.UnixListener {
 	return listener
 }
 
-func AnetListenTcp(err *string, ip string, port int64) *net.TCPListener {
+func AnetListenTcp(err *string, tcpType string, ip string, port int64) *net.TCPListener {
+	// tcpType: "tcp4" or "tcp6"
 	addr := AnetTcpAddress(ip, port)
-	address, errAddr := net.ResolveTCPAddr("tcp", addr)
+	address, errAddr := net.ResolveTCPAddr(tcpType, addr)
 	if errAddr != nil {
 		return nil
 	}
-	listener, errno := net.ListenTCP("tcp", address)
+	listener, errno := net.ListenTCP(tcpType, address)
 	if errno != nil {
 		AnetSetErrorFormat(err, "Listen error: %s", errno)
 		return nil
@@ -90,6 +91,28 @@ func AnetAccept(err *string, listener net.Listener) net.Conn {
 		return conn
 	}
 }
+
+func AnetHandler(conn net.Conn) {
+
+}
+
+func AnetTcpServer(err *string, tcpType string, ip string, port int64) net.Conn {
+	// tcpType: "tcp4" or "tcp6"
+	listener := AnetListenTcp(err, tcpType, ip, port)
+	if listener == nil {
+		return nil
+	}
+	return AnetAccept(err, listener)
+}
+
+func AnetUnixServer(err *string, address string) net.Conn {
+	listener := AnetListenUnix(err, address)
+	if listener == nil {
+		return nil
+	}
+	return AnetAccept(err, listener)
+}
+
 
 
 
