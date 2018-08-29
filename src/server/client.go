@@ -98,6 +98,30 @@ func (c *Client) AddReplyStringToList(str string) {
 	c.ReplySize += int64(len(str))
 }
 
+func (c *Client) CatClientInfoString() {
+
+}
+
+func (c *Client) GetAllClientInfoString() {
+
+}
+
+func (c *Client) ClientCommand() {
+
+}
+
+func (c *Client) GetClientType() {
+
+}
+
+func (c *Client) GetClientOutputBufferMemoryUsage() {
+
+}
+
+func (c *Client) CheckClientOutputBufferLimits() {
+
+}
+
 // functions for client
 func CopyClientOutputBuffer(dst *Client, src *Client) {
 	dst.Reply.ListEmpty()
@@ -106,3 +130,4 @@ func CopyClientOutputBuffer(dst *Client, src *Client) {
 	dst.BufPos = src.BufPos
 	dst.ReplySize = src.ReplySize
 }
+

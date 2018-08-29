@@ -422,6 +422,7 @@ NOTE: You only need to do one of the above things in order for the server to sta
 	s.LinkClient(c)
 }
 
+// Write data in output buffers to client.
 func (s *Server) WriteToClient(c *Client) (written int64) {
 	for c.HasPendingReplies() {
 		if c.BufPos > 0 {
@@ -476,3 +477,16 @@ func (s *Server) WriteToClient(c *Client) (written int64) {
 func (s *Server) ReadQueryFromClient(c *Client) {
 
 }
+
+func (s *Server) ProcessInlineBuffer(c *Client) {
+
+}
+
+func (s *Server) ProcessInputBuffer(c *Client) {
+
+}
+
+func (s *Server) ProcessMultibulkBuffer(c *Client) {
+
+}
+
