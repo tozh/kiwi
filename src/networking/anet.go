@@ -25,24 +25,24 @@ func AnetSetErrorFormat(err *string, format string, a ...interface{}) {
 //}
 
 func AnetSetTcpKeepALive(err *string, conn *net.TCPConn, keepalive bool) int64 {
-	if errno := conn.SetKeepAlive(keepalive); errno != nil {
-		AnetSetErrorFormat(err, "Set tcp KeepAlive ---> %t, error: %s", keepalive, errno)
+	if error := conn.SetKeepAlive(keepalive); error != nil {
+		AnetSetErrorFormat(err, "Set tcp KeepAlive ---> %t, error: %s", keepalive, error)
 		return ANET_ERR
 	}
 	return ANET_OK
 }
 
 func AnetSetTcpNoDelay(err *string, conn *net.TCPConn, noDelay bool)  int64{
-	if errno := conn.SetNoDelay(noDelay); errno != nil {
-		AnetSetErrorFormat(err, "Set tcp NoDelay ---> %t, error: %s", noDelay, errno)
+	if error := conn.SetNoDelay(noDelay); error != nil {
+		AnetSetErrorFormat(err, "Set tcp NoDelay ---> %t, error: %s", noDelay, error)
 		return ANET_ERR
 	}
 	return ANET_OK
 }
 
 func AnetSetTimeout(err *string, conn *net.TCPConn, timeMs int64) int64 {
-	if 	errno := conn.SetDeadline(time.Now().Add(time.Millisecond * time.Duration(timeMs))); errno != nil {
-		AnetSetErrorFormat(err, "Set Timeout(ms) ---> %d, error: %s", timeMs, errno)
+	if 	error := conn.SetDeadline(time.Now().Add(time.Millisecond * time.Duration(timeMs))); error != nil {
+		AnetSetErrorFormat(err, "Set Timeout(ms) ---> %d, error: %s", timeMs, error)
 		return ANET_ERR
 	}
 	return ANET_OK
@@ -57,9 +57,9 @@ func AnetListenUnix(err *string, address string) *net.UnixListener {
 	if errAddr != nil {
 		return nil
 	}
-	listener, errno := net.ListenUnix("unix", addr)
-	if errno != nil {
-		AnetSetErrorFormat(err, "Listen error: %s", errno)
+	listener, error := net.ListenUnix("unix", addr)
+	if error != nil {
+		AnetSetErrorFormat(err, "Listen error: %s", error)
 		return nil
 	}
 	return listener
@@ -72,9 +72,9 @@ func AnetListenTcp(err *string, tcpType string, ip string, port int64) *net.TCPL
 	if errAddr != nil {
 		return nil
 	}
-	listener, errno := net.ListenTCP(tcpType, address)
-	if errno != nil {
-		AnetSetErrorFormat(err, "Listen error: %s", errno)
+	listener, error := net.ListenTCP(tcpType, address)
+	if error != nil {
+		AnetSetErrorFormat(err, "Listen error: %s", error)
 		return nil
 	}
 	return listener
@@ -83,9 +83,9 @@ func AnetListenTcp(err *string, tcpType string, ip string, port int64) *net.TCPL
 
 func AnetAccept(err *string, listener net.Listener) net.Conn {
 	for {
-		conn, errno := listener.Accept()
-		if errno != nil {
-			AnetSetErrorFormat(err, "Accept error: %s", errno)
+		conn, error := listener.Accept()
+		if error != nil {
+			AnetSetErrorFormat(err, "Accept error: %s", error)
 			continue
 		}
 		return conn
