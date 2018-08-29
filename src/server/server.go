@@ -1,16 +1,18 @@
 package server
 
 import (
-	."redigo/src/structure"
-	."redigo/src/db"
-	."redigo/src/object"
-	."redigo/src/constant"
+	. "redigo/src/structure"
+	. "redigo/src/db"
+	. "redigo/src/object"
+	. "redigo/src/constant"
+	. "redigo/src/networking"
 	"sync"
 	"fmt"
 	"strconv"
 	"bytes"
 	"strings"
 	"net"
+	"time"
 )
 
 //type Object struct {
@@ -30,61 +32,67 @@ import (
 //}
 
 type RedisCommand struct {
-	Name string
+	Name  string
 	Arity int64
 	Flags int64
 	/* What keys should be loaded in background when calling this command? */
 	FirstKey int64
-	LastKey int64
-	KeyStep int64
-	Msec int64
-	Calls int64
+	LastKey  int64
+	KeyStep  int64
+	Msec     int64
+	Calls    int64
 }
 
 type Op struct {
-	Argc int64       // count of arguments
-	Argv []string // arguments of current command
-	DbId int64
+	Argc   int64    // count of arguments
+	Argv   []string // arguments of current command
+	DbId   int64
 	Target int64
-	Cmd *RedisCommand
+	Cmd    *RedisCommand
 }
 
 type Server struct {
-	Pid int64
-	PidFile string
-	ConfigFile string
-	ExecFile string
-	ExecArgv []string
-	Hz int64		// serverCron() calls frequency in hertz
-	Dbs []*Db
-	DbNum int64
-	Commands map[interface{}]RedisCommand
+	Pid          int64
+	PidFile      string
+	ConfigFile   string
+	ExecFile     string
+	ExecArgv     []string
+	Hz           int64 // serverCron() calls frequency in hertz
+	Dbs          []*Db
+	DbNum        int64
+	Commands     map[interface{}]RedisCommand
 	OrigCommands map[interface{}]RedisCommand
 
-	UnixTimeInMs int64 // UnixTime in millisecond
-	LruClock int64 // Clock for LRU eviction
+	UnixTime         time.Duration // UnixTime in millisecond
+	LruClock         int64         // Clock for LRU eviction
 	ShutdownNeedAsap bool
 
 	CronLoops int64
 
-	LoadModuleQueue *List  // List of modules to load at startup.
-	NextClientId int64
+	LoadModuleQueue *List // List of modules to load at startup.
+	NextClientId    int64
 
 	// Network
-	Port int64  // TCP listening port
-	BindAddr [CONFIG_BINDADDR_MAX]string
-	BindAddrCount int64 // Number of addresses in server.bindaddr[]
-	UnixSocketPath string  // UNIX socket path
+	Port           int64 // TCP listening port
+	BindAddr       [CONFIG_BINDADDR_MAX]string
+	BindAddrCount  int64  // Number of addresses in server.bindaddr[]
+	UnixSocketPath string // UNIX socket path
 	//IpFileDesc []string  // TCP socket file descriptors
 	//SocketFileDesc string // Unix socket file descriptor
-	Clients *List  // List of active clients
-	ClientsToClose *List  // Clients to close asynchronously
-	ClientsPendingWrite *List  // There is to write or install handler.
-	MaxClients int64
-	StatRejectedConn int64
-	ProtectedMode bool  // Don't accept external connections.
-	Password string
+	CurrentClient       *Client
+	Clients             *List // List of active clients
+	ClientsMap          map[int64]*Client
+	ClientsToClose      *List // Clients to close asynchronously
+	ClientsPendingWrite *List // There is to write or install handler.
+	ClientsUnblocked    *List //
+	MaxClients          int64
+	ProtectedMode   bool // Don't accept external connections.
+	Password        string
 	RequirePassword bool
+	TcpKeepAlive bool
+
+
+
 	//Loading bool  // Server is loading date from disk if true
 	//LoadingTotalSize int64
 	//LoadingLoadedSize int64
@@ -96,7 +104,7 @@ type Server struct {
 	//TcpKeepAlive bool
 	//
 	//
-	Dirty int64  // Changes to DB from the last save
+	Dirty int64 // Changes to DB from the last save
 	// DirtyBeforeBgSave  //  Used to restore dirty on failed BGSAVE
 	//// AOF persistence
 	//AofState int64  //  AOF(ON|OFF|WAIT_REWRITE)
@@ -112,7 +120,6 @@ type Server struct {
 	//AofFileDesc int64  // File descriptor of currently selected AOF file
 	//AofSelectedDb bool  // Currently selected DB in AOF
 	//AofPropagate []*RedisOp  // Additional command to propagate.
-
 
 	//// RDB persistence
 	//
@@ -130,31 +137,44 @@ type Server struct {
 
 	Shared SharedObjects
 
+	StatRejectedConn   int64
+	StatConnCount      int64
+	StatNetOutputBytes int64
+
 	ConfigFlushAll bool
-	mutex sync.Mutex
+	mutex          sync.Mutex
 }
 
 func (s *Server) CreateClient(conn net.Conn) *Client {
-	createTime := s.UnixTimeInMs
+	if conn != nil {
+		if s.TcpKeepAlive {
+			AnetSetTcpKeepALive(nil, conn.(*net.TCPConn), s.TcpKeepAlive)
+		}
+	}
+
+	createTime := s.UnixTime
 	var c = Client{
-		Id: 0,
-		Conn: conn,
-		Name: "",
-		QueryBuf: "",
-		QueryBufPeak: 0,
-		Argc: 0,       // count of arguments
-		Argv: make([]string, 5), // arguments of current command
-		Cmd: nil,
-		LastCmd: nil,
-		Reply: ListCreate(),
-		ReplySize: 0,
-		SentSize: 0, // Amount of bytes already sent in the current buffer or object being sent.
-		CreateTime: createTime,
-		LastInteraction: createTime,
-		Buf: make([]byte, PROTO_REPLY_CHUNK_BYTES),
-		BufPos:0,
-		SentLen:0,
-		Flags: 0,
+		Id:               0,
+		Conn:             conn,
+		Name:             "",
+		QueryBuf:         "",
+		QueryBufPeak:     0,
+		Argc:             0,                 // count of arguments
+		Argv:             make([]string, 5), // arguments of current command
+		Cmd:              nil,
+		LastCmd:          nil,
+		Reply:            ListCreate(),
+		ReplySize:        0,
+		SentSize:         0, // Amount of bytes already sent in the current buffer or object being sent.
+		CreateTime:       createTime,
+		LastInteraction:  createTime,
+		Buf:              make([]byte, PROTO_REPLY_CHUNK_BYTES),
+		BufPos:           0,
+		SentLen:          0,
+		Flags:            0,
+		Node:             nil,
+		PendingWriteNode: nil,
+		UnblockedNode:    nil,
 	}
 	c.GetNextClientId(s)
 	c.SelectDB(s, 0)
@@ -163,18 +183,44 @@ func (s *Server) CreateClient(conn net.Conn) *Client {
 
 func (s *Server) LinkClient(c *Client) {
 	s.Clients.ListAddNodeTail(c)
-	// store the pointer: Node
+	s.ClientsMap[c.Id] = c
+	c.Node = s.Clients.ListTail()
+	s.StatConnCount++
 }
+
 func (s *Server) UnLinkClient(c *Client) {
-	s.Clients.ListDelNode(c)
+	if s.CurrentClient == c {
+		s.CurrentClient = nil
+	}
+	if c.Conn != nil {
+		s.Clients.ListDelNode(c.Node)
+		c.Node = nil
+		delete(s.ClientsMap, c.Id)
+		s.StatConnCount--
+		c.Conn = nil
+	}
+	if c.WithFlags(CLIENT_PENDING_WRITE) {
+		s.ClientsPendingWrite.ListDelNode(c.PendingWriteNode)
+		c.PendingWriteNode = nil
+		c.DeleteFlags(CLIENT_PENDING_WRITE)
+	}
+	if c.WithFlags(CLIENT_UNBLOCKED) {
+		s.ClientsUnblocked.ListDelNode(c.UnblockedNode)
+		c.UnblockedNode = nil
+		c.DeleteFlags(CLIENT_UNBLOCKED)
+	}
+}
+
+func (s *Server) GetClientById(id int64) *Client {
+	return s.ClientsMap[id]
 }
 
 func (s *Server) PrepareClientToWrite(c *Client) int64 {
-	if c.WithFlags(CLIENT_LUA|CLIENT_MODULE) {
+	if c.WithFlags(CLIENT_LUA | CLIENT_MODULE) {
 		return C_OK
 	}
 
-	if c.WithFlags(CLIENT_REPLY_OFF|CLIENT_REPLY_SKIP) {
+	if c.WithFlags(CLIENT_REPLY_OFF | CLIENT_REPLY_SKIP) {
 		return C_ERR
 	}
 
@@ -193,15 +239,13 @@ func (s *Server) PrepareClientToWrite(c *Client) int64 {
 	return C_OK
 }
 
-
 func (s *Server) CloseClientAsync(c *Client) {
-	if c.Flags & CLIENT_CLOSE_ASAP != 0 || c.Flags & CLIENT_LUA != 0 {
+	if c.Flags&CLIENT_CLOSE_ASAP != 0 || c.Flags&CLIENT_LUA != 0 {
 		return
 	}
 	c.AddFlags(CLIENT_CLOSE_ASAP)
 	s.ClientsToClose.ListAddNodeTail(c)
 }
-
 
 func (s *Server) AddReply(c *Client, str string) {
 	if s.PrepareClientToWrite(c) != C_OK {
@@ -225,7 +269,7 @@ func (s *Server) AddReplyStrObj(c *Client, o *StrObject) {
 }
 
 func (s *Server) AddReplyError(c *Client, str string) {
-	if len(str) !=0 || str[0] != '-' {
+	if len(str) != 0 || str[0] != '-' {
 		s.AddReply(c, "-ERR ")
 	}
 	s.AddReply(c, str)
@@ -343,8 +387,8 @@ func (s *Server) AcceptUnixConn(conn net.Conn, flags int64) {
 		conn.Write(err)
 		s.StatRejectedConn++
 	}
-	if s.ProtectedMode && s.BindAddrCount == 0 && !s.RequirePassword
-
+	c.AddFlags(CLIENT_UNIX_SOCKET)
+	s.LinkClient(c)
 }
 
 func (s *Server) AcceptTcpConn(conn net.Conn, flags int64, ip string) {
@@ -374,24 +418,61 @@ NOTE: You only need to do one of the above things in order for the server to sta
 		conn.Write(err)
 		s.StatRejectedConn++
 	}
-
 	c.AddFlags(0)
-	//s.LinkClient(c)
-
+	s.LinkClient(c)
 }
 
-func (s *Server) AcceptCommonHandler(conn net.Conn, flags int64) {
-
+func (s *Server) WriteToClient(c *Client) (written int64) {
+	for c.HasPendingReplies() {
+		if c.BufPos > 0 {
+			n, err := c.Write(c.Buf)
+			if err == nil {
+				if n <= 0 {
+					break
+				}
+				c.SentLen += int64(n)
+				written += n
+			}
+			if c.SentLen == c.BufPos {
+				c.SentLen = 0
+				c.BufPos = 0
+			}
+		} else {
+			str := c.Reply.ListHead().Value.(*string)
+			length := int64(len(*str))
+			if length == 0 {
+				c.Reply.ListDelNode(c.Reply.ListHead())
+			}
+			n, err := c.Write([]byte(*str))
+			if err == nil {
+				if n <= 0 {
+					break
+				}
+				c.SentLen += int64(n)
+				written += n
+			}
+			if c.SentLen == length {
+				c.Reply.ListDelNode(c.Reply.ListHead())
+				c.SentLen = 0
+				c.ReplySize -= length
+				if c.Reply.ListLength() == 0 {
+					c.ReplySize = 0
+				}
+			}
+		}
+		if written > NET_MAX_WRITES_PER_EVENT {
+			break
+		}
+	}
+	s.StatNetOutputBytes += written
+	if written > 0 {
+		if !c.WithFlags(CLIENT_MASTER) {
+			c.LastInteraction = s.UnixTime
+		}
+	}
+	return written
 }
 
+func (s *Server) ReadQueryFromClient(c *Client) {
 
-
-
-
-
-
-
-
-
-
-
+}

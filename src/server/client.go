@@ -5,38 +5,45 @@ import (
 	. "redigo/src/db"
 	. "redigo/src/constant"
 	"net"
+	"time"
 )
 
 type Client struct {
-	Id int64
-	Conn net.Conn
-	Db *Db
-	Name string
-	QueryBuf string // buffer use to accumulate client query
-	QueryBufPeak int64
-	Argc int64       // count of arguments
-	Argv []string // arguments of current command
-	Cmd *RedisCommand
-	LastCmd *RedisCommand
-	Reply *List
-	ReplySize int64
-	SentSize int64 // Amount of bytes already sent in the current buffer or object being sent.
-	CreateTime int64
-	LastInteraction  int64
-	Buf []byte
-	BufPos int64
-	SentLen int64
-	Flags int64
+	Id               int64
+	Conn             net.Conn
+	Db               *Db
+	Name             string
+	QueryBuf         string // buffer use to accumulate client query
+	QueryBufPeak     int64
+	Argc             int64    // count of arguments
+	Argv             []string // arguments of current command
+	Cmd              *RedisCommand
+	LastCmd          *RedisCommand
+	Reply            *List
+	ReplySize        int64
+	SentSize         int64 // Amount of bytes already sent in the current buffer or object being sent.
+	CreateTime       time.Duration
+	LastInteraction  time.Duration
+	Buf              []byte
+	BufPos           int64
+	SentLen          int64
+	Flags            int64
+	Node             *ListNode
+	PendingWriteNode *ListNode
+	UnblockedNode    *ListNode
 }
 
 func (c *Client) WithFlags(flags int64) bool {
-	return c.Flags & flags != 0
+	return c.Flags&flags != 0
 }
 
 func (c *Client) AddFlags(flags int64) {
 	c.Flags |= flags
 }
 
+func (c *Client) DeleteFlags(flags int64) {
+	c.Flags &= ^flags
+}
 
 func (c *Client) SelectDB(s *Server, dbId int64) int64 {
 	if dbId < 0 || dbId >= s.DbNum {
@@ -58,7 +65,7 @@ func (c *Client) HasPendingReplies() bool {
 }
 
 func (c *Client) AddReplyToBuffer(str string) int64 {
-	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY){
+	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
 		return C_OK
 	}
 	if c.Reply.ListLength() > 0 {
@@ -71,6 +78,16 @@ func (c *Client) AddReplyToBuffer(str string) int64 {
 	copy(c.Buf[c.BufPos:], str)
 	c.BufPos += int64(len(str))
 	return C_OK
+}
+
+func (c *Client) Write(b []byte) (int64, error) {
+	n, err := c.Conn.Write(b)
+	return int64(n), err
+}
+
+func (c *Client) Read(b []byte) (int64, error) {
+	n, err := c.Conn.Read(b)
+	return int64(n), err
 }
 
 func (c *Client) AddReplyStringToList(str string) {
@@ -89,4 +106,3 @@ func CopyClientOutputBuffer(dst *Client, src *Client) {
 	dst.BufPos = src.BufPos
 	dst.ReplySize = src.ReplySize
 }
-
