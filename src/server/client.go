@@ -6,6 +6,7 @@ import (
 	. "redigo/src/constant"
 	"net"
 	"time"
+	"bytes"
 )
 
 type Client struct {
@@ -13,7 +14,7 @@ type Client struct {
 	Conn             net.Conn
 	Db               *Db
 	Name             string
-	QueryBuf         string // buffer use to accumulate client query
+	QueryBuf         []byte // buffer use to accumulate client query
 	QueryBufPeak     int64
 	Argc             int64    // count of arguments
 	Argv             []string // arguments of current command
@@ -99,6 +100,31 @@ func (c *Client) AddReplyStringToList(str string) {
 }
 
 func (c *Client) CatClientInfoString() {
+	flags := bytes.Buffer{}
+	if c.WithFlags(CLIENT_SLAVE) {
+		if c.WithFlags(CLIENT_MONITOR) {
+			flags.WriteByte('O')
+		} else {
+			flags.WriteByte('S')
+		}
+	}
+
+
+	if c.WithFlags(CLIENT_MASTER) { flags.WriteByte('M') }
+	if c.WithFlags(CLIENT_PUBSUB) { flags.WriteByte('P') }
+	if c.WithFlags(CLIENT_MULTI) { flags.WriteByte('x') }
+	if c.WithFlags(CLIENT_BLOCKED) { flags.WriteByte('b') }
+	if c.WithFlags(CLIENT_DIRTY_CAS) { flags.WriteByte('d') }
+	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) { flags.WriteByte('c') }
+	if c.WithFlags(CLIENT_UNBLOCKED) { flags.WriteByte('u') }
+	if c.WithFlags(CLIENT_CLOSE_ASAP) { flags.WriteByte('A') }
+	if c.WithFlags(CLIENT_UNIX_SOCKET) { flags.WriteByte('U') }
+	if c.WithFlags(CLIENT_READONLY) { flags.WriteByte('r') }
+	if flags.Len() == 0 {
+		flags.WriteByte('N')
+	}
+	flags.WriteByte(0)
+
 
 }
 
@@ -119,6 +145,11 @@ func (c *Client) GetClientOutputBufferMemoryUsage() {
 }
 
 func (c *Client) CheckClientOutputBufferLimits() {
+
+}
+
+// resetClient prepare the client to process the next command
+func (c *Client) Reset() {
 
 }
 

@@ -157,7 +157,7 @@ func (s *Server) CreateClient(conn net.Conn) *Client {
 		Id:               0,
 		Conn:             conn,
 		Name:             "",
-		QueryBuf:         "",
+		QueryBuf:         make([]byte, PROTO_INLINE_MAX_SIZE),
 		QueryBufPeak:     0,
 		Argc:             0,                 // count of arguments
 		Argv:             make([]string, 5), // arguments of current command
@@ -478,7 +478,15 @@ func (s *Server) ReadQueryFromClient(c *Client) {
 
 }
 
-func (s *Server) ProcessInlineBuffer(c *Client) {
+func (s *Server) ProcessInlineBuffer(c *Client) int64 {
+	// Search for end of line
+	newline := bytes.IndexByte(c.QueryBuf,'\n')
+
+	if newline == -1 {
+		if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
+			s.AddReplyError(c, "Protocol error: too big inline request")
+		}
+	}
 
 }
 
@@ -487,6 +495,10 @@ func (s *Server) ProcessInputBuffer(c *Client) {
 }
 
 func (s *Server) ProcessMultibulkBuffer(c *Client) {
+
+}
+
+func (s *Server) SetProtocolError(err *string, c *Client, pos int64) {
 
 }
 
