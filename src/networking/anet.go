@@ -49,7 +49,7 @@ func AnetSetTimeout(err *string, conn *net.TCPConn, timeMs int64) int64 {
 }
 
 func AnetTcpAddress(ip string, port int64) string {
-	return fmt.Sprintf("%s:%v", ip, port)
+	return fmt.Sprintf("%s:%d", ip, port)
 }
 
 func AnetListenUnix(err *string, address string) *net.UnixListener {

@@ -31,7 +31,7 @@ import (
 //	DefragLater *List
 //}
 
-type RedisCommand struct {
+type Command struct {
 	Name  string
 	Arity int64
 	Flags int64
@@ -48,7 +48,13 @@ type Op struct {
 	Argv   []string // arguments of current command
 	DbId   int64
 	Target int64
-	Cmd    *RedisCommand
+	Cmd    *Command
+}
+
+type ClientBufferLimitsConfig struct {
+	HardLimitBytes int64
+	SoftLimitBytes int64
+	SoftLimitTime time.Duration
 }
 
 type Server struct {
@@ -60,8 +66,8 @@ type Server struct {
 	Hz           int64 // serverCron() calls frequency in hertz
 	Dbs          []*Db
 	DbNum        int64
-	Commands     map[interface{}]RedisCommand
-	OrigCommands map[interface{}]RedisCommand
+	Commands     map[interface{}]Command
+	OrigCommands map[interface{}]Command
 
 	UnixTime         time.Duration // UnixTime in millisecond
 	LruClock         int64         // Clock for LRU eviction
@@ -85,6 +91,7 @@ type Server struct {
 	ClientsToClose      *List // Clients to close asynchronously
 	ClientsPendingWrite *List // There is to write or install handler.
 	ClientsUnblocked    *List //
+	ClientObufLimits [CLIENT_TYPE_OBUF_COUNT]ClientBufferLimitsConfig
 	MaxClients          int64
 	ProtectedMode   bool // Don't accept external connections.
 	Password        string
@@ -486,7 +493,15 @@ func (s *Server) ProcessInlineBuffer(c *Client) int64 {
 		if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
 			s.AddReplyError(c, "Protocol error: too big inline request")
 		}
+		return C_ERR
 	}
+	if newline != 0 && newline != len(c.QueryBuf) && c.QueryBuf[newline-1] == '\r' {
+		// Handle the \r\n case.
+		newline--
+	}
+	queryLen := newline
+	aux := string(c.QueryBuf[0:newline])
+	argv := strings.Split(aux, )
 
 }
 
@@ -502,3 +517,21 @@ func (s *Server) SetProtocolError(err *string, c *Client, pos int64) {
 
 }
 
+func (s *Server) GetAllClientInfoString(ctype int64) string {
+	str := bytes.Buffer{}
+	listIter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
+	ln := listIter.ListNext()
+	for ln != nil {
+		c := ln.Value.(*Client)
+		if ctype != -1 && c.GetClientType() != ctype {
+			continue
+		}
+		str.WriteString(c.CatClientInfoString(s))
+		str.WriteByte('\n')
+	}
+	return str.String()
+}
+
+func SplitArgs(query *[]byte, argc int64) string{
+	
+}

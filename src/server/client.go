@@ -7,6 +7,8 @@ import (
 	"net"
 	"time"
 	"bytes"
+	"fmt"
+	"unsafe"
 )
 
 type Client struct {
@@ -18,8 +20,8 @@ type Client struct {
 	QueryBufPeak     int64
 	Argc             int64    // count of arguments
 	Argv             []string // arguments of current command
-	Cmd              *RedisCommand
-	LastCmd          *RedisCommand
+	Cmd              *Command
+	LastCmd          *Command
 	Reply            *List
 	ReplySize        int64
 	SentSize         int64 // Amount of bytes already sent in the current buffer or object being sent.
@@ -32,6 +34,8 @@ type Client struct {
 	Node             *ListNode
 	PendingWriteNode *ListNode
 	UnblockedNode    *ListNode
+	PeerId           string
+	ObufSoftLimitReachedTime time.Duration
 }
 
 func (c *Client) WithFlags(flags int64) bool {
@@ -52,6 +56,21 @@ func (c *Client) SelectDB(s *Server, dbId int64) int64 {
 	}
 	c.Db = s.Dbs[dbId]
 	return C_OK
+}
+
+func (c *Client) GeneratePeerId(s *Server) {
+	if c.WithFlags(CLIENT_UNIX_SOCKET) {
+		c.PeerId = fmt.Sprintf("%s:0", s.UnixSocketPath)
+	} else {
+		c.PeerId = c.Conn.RemoteAddr().String()
+	}
+}
+
+func (c *Client) GetPeerId(s *Server) string {
+	if c.PeerId == "" {
+		c.GeneratePeerId(s)
+	}
+	return c.PeerId
 }
 
 func (c *Client) GetNextClientId(s *Server) {
@@ -99,7 +118,7 @@ func (c *Client) AddReplyStringToList(str string) {
 	c.ReplySize += int64(len(str))
 }
 
-func (c *Client) CatClientInfoString() {
+func (c *Client) CatClientInfoString(s *Server) string {
 	flags := bytes.Buffer{}
 	if c.WithFlags(CLIENT_SLAVE) {
 		if c.WithFlags(CLIENT_MONITOR) {
@@ -109,43 +128,135 @@ func (c *Client) CatClientInfoString() {
 		}
 	}
 
-
-	if c.WithFlags(CLIENT_MASTER) { flags.WriteByte('M') }
-	if c.WithFlags(CLIENT_PUBSUB) { flags.WriteByte('P') }
-	if c.WithFlags(CLIENT_MULTI) { flags.WriteByte('x') }
-	if c.WithFlags(CLIENT_BLOCKED) { flags.WriteByte('b') }
-	if c.WithFlags(CLIENT_DIRTY_CAS) { flags.WriteByte('d') }
-	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) { flags.WriteByte('c') }
-	if c.WithFlags(CLIENT_UNBLOCKED) { flags.WriteByte('u') }
-	if c.WithFlags(CLIENT_CLOSE_ASAP) { flags.WriteByte('A') }
-	if c.WithFlags(CLIENT_UNIX_SOCKET) { flags.WriteByte('U') }
-	if c.WithFlags(CLIENT_READONLY) { flags.WriteByte('r') }
+	if c.WithFlags(CLIENT_MASTER) {
+		flags.WriteByte('M')
+	}
+	if c.WithFlags(CLIENT_PUBSUB) {
+		flags.WriteByte('P')
+	}
+	if c.WithFlags(CLIENT_MULTI) {
+		flags.WriteByte('x')
+	}
+	if c.WithFlags(CLIENT_BLOCKED) {
+		flags.WriteByte('b')
+	}
+	if c.WithFlags(CLIENT_DIRTY_CAS) {
+		flags.WriteByte('d')
+	}
+	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
+		flags.WriteByte('c')
+	}
+	if c.WithFlags(CLIENT_UNBLOCKED) {
+		flags.WriteByte('u')
+	}
+	if c.WithFlags(CLIENT_CLOSE_ASAP) {
+		flags.WriteByte('A')
+	}
+	if c.WithFlags(CLIENT_UNIX_SOCKET) {
+		flags.WriteByte('U')
+	}
+	if c.WithFlags(CLIENT_READONLY) {
+		flags.WriteByte('r')
+	}
 	if flags.Len() == 0 {
 		flags.WriteByte('N')
 	}
 	flags.WriteByte(0)
+	flags.WriteByte('r')
+	flags.WriteByte('w')
+	flags.WriteByte(0)
+	cmd := "nil"
+	if c.Cmd != nil {
+		cmd = c.LastCmd.Name
+	}
 
-
+	clientFmt := "id=%d addr=%s conn=%s name=%s age=%d idle=%d flags=%s db=%d cmd=%s"
+	return fmt.Sprintf(clientFmt, c.Id, c.GetPeerId(s), c.Conn.LocalAddr().String(), c.Name, (s.UnixTime - c.CreateTime).Nanoseconds()/1000,
+		(s.UnixTime - c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.Id, cmd)
 }
 
-func (c *Client) GetAllClientInfoString() {
-
-}
 
 func (c *Client) ClientCommand() {
 
 }
 
-func (c *Client) GetClientType() {
-
+func (c *Client) GetClientType() int64 {
+	if c.WithFlags(CLIENT_MASTER) {
+		return CLIENT_TYPE_MASTER
+	}
+	if c.WithFlags(CLIENT_SLAVE) && !c.WithFlags(CLIENT_MONITOR) {
+		return CLIENT_TYPE_SLAVE
+	}
+	if c.WithFlags(CLIENT_TYPE_PUBSUB) {
+		return CLIENT_TYPE_PUBSUB
+	}
+	return CLIENT_TYPE_NORMAL
 }
 
-func (c *Client) GetClientOutputBufferMemoryUsage() {
-
+func (c *Client) GetClientTypeByName(name string) int64 {
+	switch name {
+	case "normal":
+		return CLIENT_TYPE_NORMAL
+	case "slave":
+		return CLIENT_TYPE_SLAVE
+	case "pubsub":
+		return CLIENT_TYPE_PUBSUB
+	case "master":
+		return CLIENT_TYPE_MASTER
+	default:
+		return -1
+	}
 }
 
-func (c *Client) CheckClientOutputBufferLimits() {
+func (c *Client) GetClientTypeName(ctype int64) string {
+	switch ctype {
+	case CLIENT_TYPE_NORMAL:
+		return "normal"
+	case CLIENT_TYPE_SLAVE:
+		return "slave"
+	case CLIENT_TYPE_PUBSUB:
+		return "pubsub"
+	case CLIENT_TYPE_MASTER:
+		return "master"
+	default:
+		return ""
+	}
+}
 
+func (c *Client) GetOutputBufferMemoryUsage() int64 {
+	listNodeSize := int64(unsafe.Sizeof(ListNode{}))
+	listSize := int64(unsafe.Sizeof(List{}))
+	return c.ReplySize + c.Reply.ListLength() * listNodeSize + listSize
+}
+
+func (c *Client) CheckOutputBufferLimits(s *Server) bool {
+	usedMem := c.GetOutputBufferMemoryUsage()
+	ctype := c.GetClientType()
+	hard := false
+	soft := false
+	if ctype == CLIENT_TYPE_MASTER {
+		ctype = CLIENT_TYPE_NORMAL
+	}
+	if s.ClientObufLimits[ctype].HardLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].HardLimitBytes {
+		hard = true
+	}
+	if s.ClientObufLimits[ctype].SoftLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].SoftLimitBytes {
+		soft = true
+	}
+	if soft == true {
+		if c.ObufSoftLimitReachedTime == 0 {
+			c.ObufSoftLimitReachedTime = s.UnixTime
+			soft = false /* First time we see the soft limit reached */
+		} else {
+			elapsed := s.UnixTime - c.ObufSoftLimitReachedTime
+			if elapsed <= s.ClientObufLimits[ctype].SoftLimitTime {
+				soft = false
+			}
+		}
+	} else {
+		c.ObufSoftLimitReachedTime = 0
+	}
+	return soft || hard
 }
 
 // resetClient prepare the client to process the next command
@@ -161,4 +272,3 @@ func CopyClientOutputBuffer(dst *Client, src *Client) {
 	dst.BufPos = src.BufPos
 	dst.ReplySize = src.ReplySize
 }
-

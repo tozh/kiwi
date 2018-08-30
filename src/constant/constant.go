@@ -88,11 +88,18 @@ const PROTO_IOBUF_LEN = 1024 * 16                 /* Generic I/O buffer size */
 const PROTO_REPLY_CHUNK_BYTES = 16 * 1024         /* 16k output buffer */
 const PROTO_INLINE_MAX_SIZE = 1024 * 64           /* Max size of inline reads */
 const PROTO_MBULK_BIG_ARG = 1024 * 32
+const PROTO_DUMP_LEN = 128
 const LONG_STR_SIZE = 21                      /* Bytes needed for long -> str + '\0' */
 const REDIS_AUTOSYNC_BYTES = 1024 * 1024 * 32 /* fdatasync every 32MB */
 
 const LIMIT_PENDING_QUERYBUF = 4 * 1024 * 1024 /* 4mb */
-
+const CLIENT_TYPE_NORMAL = 0 /* Normal req-reply clients + MONITORs */
+const CLIENT_TYPE_SLAVE = 1  /* Slaves. */
+const CLIENT_TYPE_PUBSUB = 2 /* Clients subscribed to PubSub channels. */
+const CLIENT_TYPE_MASTER = 3 /* Master. */
+const CLIENT_TYPE_OBUF_COUNT = 3 /* Number of clients to expose to output
+                                    buffer configuration. Just the first
+                                    three: normal, slave, pubsub. */
 /* Networking Constants */
 
 const ANET_OK = 0
