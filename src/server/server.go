@@ -501,9 +501,15 @@ func (s *Server) ProcessInlineBuffer(c *Client) int64 {
 	}
 	queryLen := newline
 	aux := string(c.QueryBuf[0:newline])
+	/* Split the input buffer up to the \r\n */
 	argv := strings.Split(aux, )
 
 }
+
+
+
+
+
 
 func (s *Server) ProcessInputBuffer(c *Client) {
 
@@ -530,8 +536,4 @@ func (s *Server) GetAllClientInfoString(ctype int64) string {
 		str.WriteByte('\n')
 	}
 	return str.String()
-}
-
-func SplitArgs(query *[]byte, argc int64) string{
-	
 }
