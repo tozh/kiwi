@@ -2,13 +2,12 @@ package object
 
 import (
 	. "redigo/src/constant"
-	."redigo/src/server"
+	. "redigo/src/server"
 	"strconv"
 	"math"
 	"errors"
 	"bytes"
 )
-
 
 type StrObject struct {
 	Object
@@ -19,9 +18,9 @@ func IsSharedInt(i int64) bool {
 	return 0 <= i && i < SHARED_INTEGERS
 }
 
-func IsOverflowInt(oldValue int64, incr int64) bool{
-	return (incr < 0 && oldValue < 0 && incr < math.MinInt64 - oldValue) ||
-		(incr > 0 && oldValue > 0 && incr > math.MaxInt64 - oldValue)
+func IsOverflowInt(oldValue int64, incr int64) bool {
+	return (incr < 0 && oldValue < 0 && incr < math.MinInt64-oldValue) ||
+		(incr > 0 && oldValue > 0 && incr > math.MaxInt64-oldValue)
 }
 
 func IsStrObjectInt(o *StrObject) bool {
@@ -51,9 +50,9 @@ func GetStrObjectValueString(o *StrObject) (string, error) {
 
 func CreateStrObjectByStr(s *Server, str string) *StrObject {
 	obj := createObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_STR)
-	o := StrObject {
-		Object:obj,
-		Value:&str,
+	o := StrObject{
+		Object: obj,
+		Value:  &str,
 	}
 	return StrObjectEncode(s, &o)
 }
@@ -65,9 +64,9 @@ func CreateStrObjectByInt(s *Server, i int64) *StrObject {
 		return o
 	}
 	obj := createObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_INT)
-	o := StrObject {
-		Object:obj,
-		Value:&i,
+	o := StrObject{
+		Object: obj,
+		Value:  &i,
 	}
 	return &o
 }
@@ -101,7 +100,6 @@ func AppendStrObject(s *Server, o *StrObject, b string) *StrObject {
 	return StrObjectEncode(s, o)
 }
 
-
 func StrObjectEncode(s *Server, o *StrObject) *StrObject {
 	if !IsStrObjectString(o) || o.RefConut > 1 {
 		return o
@@ -131,15 +129,12 @@ func StrObjectDecode(s *Server, o *StrObject) *StrObject {
 	return o
 }
 
-
-
 // Utilities for string
 func IsSpace(b byte) bool {
 	return b == ' ' || b == '\r' || b == '\n'
 }
 
-
-func CatString(a string, b string) string{
+func CatString(a string, b string) string {
 	if b == "" {
 		return a
 	}
@@ -170,12 +165,12 @@ func CatString(a string, b string) string{
  */
 func SplitArgs(args []byte) []string {
 	var vector []string
-	for i:=0; i<len(args); i++{
+	for i := 0; i < len(args); i++ {
 		// skip blanks
-		for i<len(args) && IsSpace(args[i]) {
+		for i < len(args) && IsSpace(args[i]) {
 			i++
 		}
-		if i<len(args) {
+		if i < len(args) {
 			inQoutes := false
 			inSingleQoutes := false
 			done := false
@@ -185,15 +180,20 @@ func SplitArgs(args []byte) []string {
 					if args[i] == '\\' && args[i+1] == 'x' && IsHexDigit(args[i+2]) && IsHexDigit(args[i+3]) {
 						b := HexDigitToInt(args[i+2])*16 + HexDigitToInt(args[i+3])
 						buf.WriteByte(b)
-						i+=3
+						i += 3
 					} else if args[i] == '\\' && i+1 < len(args) {
 						i++
 						switch args[i] {
-						case 'n': buf.WriteByte('\n')
-						case 'r': buf.WriteByte('\r')
-						case 't': buf.WriteByte('\t')
-						case 'b': buf.WriteByte('\b')
-						case 'a': buf.WriteByte('\a')
+						case 'n':
+							buf.WriteByte('\n')
+						case 'r':
+							buf.WriteByte('\r')
+						case 't':
+							buf.WriteByte('\t')
+						case 'b':
+							buf.WriteByte('\b')
+						case 'a':
+							buf.WriteByte('\a')
 						default:
 							buf.WriteByte(args[i])
 						}
@@ -226,18 +226,25 @@ func SplitArgs(args []byte) []string {
 					}
 				} else {
 					switch args[i] {
-					case ' ':  done = true
-					case '\n':  done = true
-					case '\r':  done = true
-					case '\t':  done = true
-					case 0:  done = true
-					case '"':  inQoutes = true
-					case '\'':  inSingleQoutes = true
+					case ' ':
+						done = true
+					case '\n':
+						done = true
+					case '\r':
+						done = true
+					case '\t':
+						done = true
+					case 0:
+						done = true
+					case '"':
+						inQoutes = true
+					case '\'':
+						inSingleQoutes = true
 					default:
 						buf.WriteByte(args[i])
 					}
 				}
-				if i<len(args) {
+				if i < len(args) {
 					i++
 				}
 			}
@@ -253,28 +260,50 @@ func IsHexDigit(b byte) bool {
 
 func HexDigitToInt(b byte) byte {
 	switch b {
-	case '0': return 0
-	case '1': return 1
-	case '2': return 2
-	case '3': return 3
-	case '4': return 4
-	case '5': return 5
-	case '6': return 6
-	case '7': return 7
-	case '8': return 8
-	case '9': return 9
-	case 'A': return 10
-	case 'a': return 10
-	case 'B': return 11
-	case 'b': return 11
-	case 'C': return 12
-	case 'c': return 12
-	case 'D': return 13
-	case 'd': return 13
-	case 'E': return 14
-	case 'e': return 14
-	case 'F': return 15
-	case 'f': return 15
+	case '0':
+		return 0
+	case '1':
+		return 1
+	case '2':
+		return 2
+	case '3':
+		return 3
+	case '4':
+		return 4
+	case '5':
+		return 5
+	case '6':
+		return 6
+	case '7':
+		return 7
+	case '8':
+		return 8
+	case '9':
+		return 9
+	case 'A':
+		return 10
+	case 'a':
+		return 10
+	case 'B':
+		return 11
+	case 'b':
+		return 11
+	case 'C':
+		return 12
+	case 'c':
+		return 12
+	case 'D':
+		return 13
+	case 'd':
+		return 13
+	case 'E':
+		return 14
+	case 'e':
+		return 14
+	case 'F':
+		return 15
+	case 'f':
+		return 15
 	default:
 		return 0
 	}

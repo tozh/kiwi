@@ -93,11 +93,11 @@ const LONG_STR_SIZE = 21                      /* Bytes needed for long -> str + 
 const REDIS_AUTOSYNC_BYTES = 1024 * 1024 * 32 /* fdatasync every 32MB */
 
 const LIMIT_PENDING_QUERYBUF = 4 * 1024 * 1024 /* 4mb */
-const CLIENT_TYPE_NORMAL = 0 /* Normal req-reply clients + MONITORs */
-const CLIENT_TYPE_SLAVE = 1  /* Slaves. */
-const CLIENT_TYPE_PUBSUB = 2 /* Clients subscribed to PubSub channels. */
-const CLIENT_TYPE_MASTER = 3 /* Master. */
-const CLIENT_TYPE_OBUF_COUNT = 3 /* Number of clients to expose to output
+const CLIENT_TYPE_NORMAL = 0                   /* Normal req-reply clients + MONITORs */
+const CLIENT_TYPE_SLAVE = 1                    /* Slaves. */
+const CLIENT_TYPE_PUBSUB = 2                   /* Clients subscribed to PubSub channels. */
+const CLIENT_TYPE_MASTER = 3                   /* Master. */
+const CLIENT_TYPE_OBUF_COUNT = 3               /* Number of clients to expose to output
                                     buffer configuration. Just the first
                                     three: normal, slave, pubsub. */
 /* Networking Constants */
@@ -112,3 +112,11 @@ const ANET_IP_ONLY = (1 << 0)
 
 const CONFIG_BINDADDR_MAX = 16
 const NET_MAX_WRITES_PER_EVENT = 1024 * 64
+
+/* Log levels */
+const LL_DEBUG = 0
+const LL_VERBOSE = 1
+const LL_NOTICE = 2
+const LL_WARNING = 3
+const LL_RAW = (1 << 10) /* Modifier to log without timestamp */
+const CONFIG_DEFAULT_VERBOSITY = LL_NOTICE

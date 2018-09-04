@@ -1,17 +1,16 @@
 package object
 
 import (
-	. "redigo/src/structure"
 	. "redigo/src/constant"
 	"time"
-	."redigo/src/server"
+	. "redigo/src/server"
 	"math"
 )
 
 type Object struct {
-	RType int64
+	RType    int64
 	Encoding int64
-	Lru int64
+	Lru      int64
 	RefConut int64
 }
 
@@ -32,12 +31,12 @@ type ZSetObject struct {
 
 type HashObject struct {
 	Object
-	Value *map[string] string
+	Value *map[string]string
 }
 
 type SetObject struct {
 	Object
-	Value *map[string] string
+	Value *map[string]string
 }
 
 type IObject interface {
@@ -112,7 +111,7 @@ func (o *Object) setEncode(encode int64) {
 	o.Encoding = encode
 }
 
-func (o *Object) getLRU() int64{
+func (o *Object) getLRU() int64 {
 	return o.Lru
 }
 
@@ -152,12 +151,12 @@ func (o *Object) RefreshLRUClock(s *Server) {
 }
 
 /* functions for Objects */
-func createObject(s *Server, rtype int64, encoding int64,) Object{
-	obj := Object {
-		RType:rtype,
-		Encoding:encoding,
-		Lru: LRUClock(s),
-		RefConut:1,
+func createObject(s *Server, rtype int64, encoding int64, ) Object {
+	obj := Object{
+		RType:    rtype,
+		Encoding: encoding,
+		Lru:      LRUClock(s),
+		RefConut: 1,
 	}
 	return obj
 }
@@ -172,12 +171,10 @@ func LRUClock(s *Server) int64 {
 }
 
 func SimpleGetLRUClock() int64 {
-	mstime := time.Now().UnixNano()/1000
+	mstime := time.Now().UnixNano() / 1000
 	return mstime / LRU_CLOCK_RESOLUTION & LRU_CLOCK_MAX
 }
 
 func CheckRType(o IObject, rtype int64) bool {
 	return o != nil && o.(*Object).RType == rtype
 }
-
-

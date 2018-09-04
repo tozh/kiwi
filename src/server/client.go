@@ -12,30 +12,33 @@ import (
 )
 
 type Client struct {
-	Id               int64
-	Conn             net.Conn
-	Db               *Db
-	Name             string
-	QueryBuf         []byte // buffer use to accumulate client query
-	QueryBufPeak     int64
-	Argc             int64    // count of arguments
-	Argv             []string // arguments of current command
-	Cmd              *Command
-	LastCmd          *Command
-	Reply            *List
-	ReplySize        int64
-	SentSize         int64 // Amount of bytes already sent in the current buffer or object being sent.
-	CreateTime       time.Duration
-	LastInteraction  time.Duration
-	Buf              []byte
-	BufPos           int64
-	SentLen          int64
-	Flags            int64
-	Node             *ListNode
-	PendingWriteNode *ListNode
-	UnblockedNode    *ListNode
-	PeerId           string
+	Id                       int64
+	Conn                     net.Conn
+	Db                       *Db
+	Name                     string
+	QueryBuf                 []byte // buffer use to accumulate client query
+	QueryBufPeak             int64
+	Argc                     int64    // count of arguments
+	Argv                     []string // arguments of current command
+	Cmd                      *Command
+	LastCmd                  *Command
+	Reply                    *List
+	ReplySize                int64
+	SentSize                 int64 // Amount of bytes already sent in the current buffer or object being sent.
+	CreateTime               time.Duration
+	LastInteraction          time.Duration
+	Buf                      []byte
+	BufPos                   int64
+	SentLen                  int64
+	Flags                    int64
+	Node                     *ListNode
+	PendingWriteNode         *ListNode
+	UnblockedNode            *ListNode
+	PeerId                   string
 	ObufSoftLimitReachedTime time.Duration
+	RequestType              int64 // Request protocol type: PROTO_REQ_*
+	MultiBulkLen             int64 // Number of multi bulk arguments left to read.
+	BulkLen                  int64 // Length of bulk argument in multi bulk request.
 }
 
 func (c *Client) WithFlags(flags int64) bool {
@@ -175,7 +178,6 @@ func (c *Client) CatClientInfoString(s *Server) string {
 		(s.UnixTime - c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.Id, cmd)
 }
 
-
 func (c *Client) ClientCommand() {
 
 }
@@ -226,7 +228,7 @@ func (c *Client) GetClientTypeName(ctype int64) string {
 func (c *Client) GetOutputBufferMemoryUsage() int64 {
 	listNodeSize := int64(unsafe.Sizeof(ListNode{}))
 	listSize := int64(unsafe.Sizeof(List{}))
-	return c.ReplySize + c.Reply.ListLength() * listNodeSize + listSize
+	return c.ReplySize + c.Reply.ListLength()*listNodeSize + listSize
 }
 
 func (c *Client) CheckOutputBufferLimits(s *Server) bool {
@@ -261,6 +263,20 @@ func (c *Client) CheckOutputBufferLimits(s *Server) bool {
 
 // resetClient prepare the client to process the next command
 func (c *Client) Reset() {
+	//var prevCmd *CommandProcess = nil
+	//if c.Cmd != nil {
+	//	prevCmd = c.Cmd.Process
+	//}
+	c.Argv = make([]string, 0)
+	c.RequestType = 0
+	c.MultiBulkLen = 0
+	c.BulkLen = 1
+
+	c.DeleteFlags(CLIENT_REPLY_SKIP)
+	if c.WithFlags(CLIENT_REPLY_SKIP_NEXT) {
+		c.AddFlags(CLIENT_REPLY_SKIP)
+		c.DeleteFlags(CLIENT_REPLY_SKIP_NEXT)
+	}
 
 }
 

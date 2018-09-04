@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"net"
 	"time"
-	."redigo/src/constant"
+	. "redigo/src/constant"
 )
 
 func AnetSetErrorFormat(err *string, format string, a ...interface{}) {
-	if err == nil  {
+	if err == nil {
 		return
 	}
 	*err = fmt.Sprintf(format, a)
@@ -32,7 +32,7 @@ func AnetSetTcpKeepALive(err *string, conn *net.TCPConn, keepalive bool) int64 {
 	return ANET_OK
 }
 
-func AnetSetTcpNoDelay(err *string, conn *net.TCPConn, noDelay bool)  int64{
+func AnetSetTcpNoDelay(err *string, conn *net.TCPConn, noDelay bool) int64 {
 	if error := conn.SetNoDelay(noDelay); error != nil {
 		AnetSetErrorFormat(err, "Set tcp NoDelay ---> %t, error: %s", noDelay, error)
 		return ANET_ERR
@@ -41,7 +41,7 @@ func AnetSetTcpNoDelay(err *string, conn *net.TCPConn, noDelay bool)  int64{
 }
 
 func AnetSetTimeout(err *string, conn *net.TCPConn, timeMs int64) int64 {
-	if 	error := conn.SetDeadline(time.Now().Add(time.Millisecond * time.Duration(timeMs))); error != nil {
+	if error := conn.SetDeadline(time.Now().Add(time.Millisecond * time.Duration(timeMs))); error != nil {
 		AnetSetErrorFormat(err, "Set Timeout(ms) ---> %d, error: %s", timeMs, error)
 		return ANET_ERR
 	}
@@ -80,7 +80,6 @@ func AnetListenTcp(err *string, tcpType string, ip string, port int64) *net.TCPL
 	return listener
 }
 
-
 func AnetAccept(err *string, listener net.Listener) net.Conn {
 	for {
 		conn, error := listener.Accept()
@@ -112,9 +111,3 @@ func AnetUnixServer(err *string, address string) net.Conn {
 	}
 	return AnetAccept(err, listener)
 }
-
-
-
-
-
-

@@ -1,9 +1,9 @@
 package db
 
 import (
+	"strconv"
 	. "redigo/src/object"
 	. "redigo/src/constant"
-	"strconv"
 )
 
 type Db struct {
@@ -46,7 +46,7 @@ func (db *Db) Delete(key string) {
 	delete(db.Dict, key)
 }
 
-func (db *Db) SetNx(key string, ptr IObject) bool{
+func (db *Db) SetNx(key string, ptr IObject) bool {
 	if value := db.Get(key); value != nil {
 		return false
 	} else {
@@ -74,8 +74,5 @@ func (db *Db) Size() int64 {
 }
 
 func (db *Db) FlushAll() {
-	db.Dict = make(map[string] IObject)
+	db.Dict = make(map[string]IObject)
 }
-
-
-

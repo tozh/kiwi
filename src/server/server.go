@@ -31,6 +31,8 @@ import (
 //	DefragLater *List
 //}
 
+type CommandProcess int64
+
 type Command struct {
 	Name  string
 	Arity int64
@@ -41,6 +43,7 @@ type Command struct {
 	KeyStep  int64
 	Msec     int64
 	Calls    int64
+	Process  *CommandProcess
 }
 
 type Op struct {
@@ -54,7 +57,7 @@ type Op struct {
 type ClientBufferLimitsConfig struct {
 	HardLimitBytes int64
 	SoftLimitBytes int64
-	SoftLimitTime time.Duration
+	SoftLimitTime  time.Duration
 }
 
 type Server struct {
@@ -91,14 +94,14 @@ type Server struct {
 	ClientsToClose      *List // Clients to close asynchronously
 	ClientsPendingWrite *List // There is to write or install handler.
 	ClientsUnblocked    *List //
-	ClientObufLimits [CLIENT_TYPE_OBUF_COUNT]ClientBufferLimitsConfig
+	ClientObufLimits    [CLIENT_TYPE_OBUF_COUNT]ClientBufferLimitsConfig
 	MaxClients          int64
-	ProtectedMode   bool // Don't accept external connections.
-	Password        string
-	RequirePassword bool
-	TcpKeepAlive bool
-
-
+	ProtectedMode       bool // Don't accept external connections.
+	Password            string
+	RequirePassword     bool
+	TcpKeepAlive        bool
+	Verbosity           int64 // loglevel in redis.conf
+	ProtoMaxBulkLen     int64
 
 	//Loading bool  // Server is loading date from disk if true
 	//LoadingTotalSize int64
@@ -485,13 +488,21 @@ func (s *Server) ReadQueryFromClient(c *Client) {
 
 }
 
+/* Like processMultibulkBuffer(), but for the inline protocol instead of RESP,
+ * this function consumes the client query buffer and creates a command ready
+ * to be executed inside the client structure. Returns C_OK if the command
+ * is ready to be executed, or C_ERR if there is still protocol to read to
+ * have a well formed command. The function also returns C_ERR when there is
+ * a protocol error: in such a case the client structure is setup to reply
+ * with the error and close the connection. */
 func (s *Server) ProcessInlineBuffer(c *Client) int64 {
 	// Search for end of line
-	newline := bytes.IndexByte(c.QueryBuf,'\n')
+	newline := bytes.IndexByte(c.QueryBuf, '\n')
 
 	if newline == -1 {
 		if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
 			s.AddReplyError(c, "Protocol error: too big inline request")
+			s.SetProtocolError("too big inline request", c, 0)
 		}
 		return C_ERR
 	}
@@ -499,17 +510,145 @@ func (s *Server) ProcessInlineBuffer(c *Client) int64 {
 		// Handle the \r\n case.
 		newline--
 	}
-	queryLen := newline
-	aux := string(c.QueryBuf[0:newline])
 	/* Split the input buffer up to the \r\n */
-	argv := strings.Split(aux, )
+	argvs := SplitArgs(c.QueryBuf[0:newline])
+	if argvs == nil {
+		s.AddReplyError(c, "Protocol error: unbalanced quotes in request")
+		s.SetProtocolError("unbalanced quotes in inline request", c, 0)
+		return C_ERR
+	}
 
+	// Leave data after the first line of the query in the buffer
+	c.QueryBuf = c.QueryBuf[newline+2:]
+	if len(argvs) != 0 {
+		c.Argc = 0
+		c.Argv = make([]string, len(argvs))
+	}
+	for index, argv := range argvs {
+		if argv != "" {
+			c.Argv[index] = argv
+			c.Argc++
+		}
+	}
+	return C_OK
 }
 
+/* Process the query buffer for client 'c', setting up the client argument
+ * vector for command execution. Returns C_OK if after running the function
+ * the client has a well-formed ready to be processed command, otherwise
+ * C_ERR if there is still to read more buffer to get the full command.
+ * The function also returns C_ERR when there is a protocol error: in such a
+ * case the client structure is setup to reply with the error and close
+ * the connection.
+ *
+ * This function is called if processInputBuffer() detects that the next
+ * command is in RESP format, so the first byte in the command is found
+ * to be '*'. Otherwise for inline commands processInlineBuffer() is called. */
+func (s *Server) ProcessMultiBulkBuffer(c *Client) int64 {
+	pos := 0
+	if c.MultiBulkLen == 0 {
+		newline := bytes.IndexByte(c.QueryBuf, '\r')
+		if newline < 0 {
+			if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
+				s.AddReplyError(c, "Protocol error: too big multibulk count request")
+				s.SetProtocolError("too big multibulk request", c, 0)
+			}
+			return C_ERR
+		}
+		if len(c.QueryBuf)-newline < 2 {
+			// end with \r\n, so \r cannot be the last char
+			return C_ERR
+		}
+		if c.QueryBuf[0] != '*' {
+			return C_ERR
+		}
+		nulkNum, err := strconv.Atoi(string(c.QueryBuf[pos+1 : newline]))
+		if err != nil || nulkNum > 1024*1024 {
+			s.AddReplyError(c, "Protocol error: invalid multibulk length")
+			s.SetProtocolError("invalid multibulk length", c, 0)
+			return C_ERR
+		}
+		// pos start of bulks
+		pos = newline + 2
+		if nulkNum <= 0 {
+			c.QueryBuf = c.QueryBuf[pos:]
+			return C_OK
+		}
+		c.MultiBulkLen = int64(nulkNum)
+		c.Argv = make([]string, c.MultiBulkLen)
+	}
+	if c.MultiBulkLen < 0 {
+		return C_ERR
+	}
+	for c.MultiBulkLen > 0 {
+		if c.BulkLen == -1 {
+			// Read bulk length if unknown
+			newline := bytes.IndexByte(c.QueryBuf, '\r')
+			if newline < 0 {
+				if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
+					s.AddReplyError(c, "Protocol error: too big bulk count string")
+					s.SetProtocolError("too big bulk count string", c, 0)
+					return C_ERR
+				}
+				break
+			}
+			if len(c.QueryBuf)-newline < 2 {
+				// end with \r\n, so \r cannot be the last char
+				break
+			}
+			if c.QueryBuf[pos] != '$' {
+				s.AddReplyError(c, fmt.Sprintf("Protocol error: expected '$', got '%c'", c.QueryBuf[pos]))
+				s.SetProtocolError("expected $ but got something else", c, 0)
+				return C_ERR
+			}
+			nulkNum, err := strconv.Atoi(string(c.QueryBuf[pos+1 : newline]))
+			if err != nil || int64(nulkNum) > s.ProtoMaxBulkLen {
+				s.AddReplyError(c, "Protocol error: invalid bulk length")
+				s.SetProtocolError("invalid bulk length", c, 0)
+				return C_ERR
+			}
+			pos = newline + 2
+			if nulkNum >= PROTO_MBULK_BIG_ARG {
+				/* If we are going to read a large object from network
+				 * try to make it likely that it will start at c->querybuf
+				 * boundary so that we can optimize object creation
+				 * avoiding a large copy of data. */
+				c.QueryBuf = c.QueryBuf[pos:]
+				qblen := len(c.QueryBuf)
+				pos = 0
+				if qblen < nulkNum+2 {
+					//	the only bulk
+					newBuf := make([]byte, nulkNum+2)
+					copy(newBuf, c.QueryBuf)
+					c.QueryBuf = newBuf
+				}
+				c.BulkLen = int64(nulkNum)
+			}
+			if int64(len(c.QueryBuf)-pos) < c.BulkLen+2 {
+				break
+			} else {
+				if pos == 0 && c.BulkLen >= PROTO_MBULK_BIG_ARG && int64(len(c.QueryBuf)) == c.BulkLen+2 {
+					c.Argv = append(c.Argv, string(c.QueryBuf[pos:c.BulkLen]))
+					c.Argc++
+				} else {
+					c.Argv = append(c.Argv, string(c.QueryBuf[pos:c.BulkLen]))
+					pos += int(c.BulkLen + 2)
+				}
+				c.BulkLen = -1
+				c.MultiBulkLen--
+			}
+		}
+	}
 
-
-
-
+	if pos > 0 {
+		// trim to pos
+		c.QueryBuf = c.QueryBuf[pos:]
+	}
+	if c.MultiBulkLen == 0 {
+		return C_OK
+	}
+	return C_ERR
+}
 
 func (s *Server) ProcessInputBuffer(c *Client) {
 
@@ -519,8 +658,21 @@ func (s *Server) ProcessMultibulkBuffer(c *Client) {
 
 }
 
-func (s *Server) SetProtocolError(err *string, c *Client, pos int64) {
-
+func (s *Server) SetProtocolError(err string, c *Client, pos int64) {
+	if s.Verbosity <= LL_VERBOSE {
+		//clientStr := c.CatClientInfoString(s)
+		errorStr := fmt.Sprintf("Query buffer during protocol error: '%s'", c.QueryBuf)
+		buf := make([]byte, len(errorStr))
+		for i := 0; i < len(errorStr); i++ {
+			if strconv.IsPrint(rune(errorStr[i])) {
+				buf[i] = errorStr[i]
+			} else {
+				buf[i] = '.'
+			}
+		}
+		c.AddFlags(CLIENT_CLOSE_AFTER_REPLY)
+		c.QueryBuf = c.QueryBuf[pos:]
+	}
 }
 
 func (s *Server) GetAllClientInfoString(ctype int64) string {

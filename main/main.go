@@ -8,7 +8,7 @@ import (
 type data struct {
 	//count int64
 	//sync.Mutex
-	Buf []byte
+	Buf    []byte
 	BufPos int64
 }
 
@@ -54,13 +54,12 @@ func main() {
 	//fmt.Println("i: 8----->", <-chans[8])
 	//fmt.Println("i: 9----->", <-chans[9])
 	//fmt.Println(time.Since(t))
-	//time.Sleep(2*time.Second)
+	//time.Sleep(2*time.Second)Ò
 
-	s := "hello\r\n"
-	fmt.Println(len(s))
-	fmt.Println(s)
-	buf := bytes.Buffer{}
-	fmt.Println(buf.Cap())
+	s := []byte("*hello\r\n")
+	newline := bytes.IndexByte(s, '\r')
+	pos := newline + 2
+	fmt.Println(string(s[pos:]))
 
 }
 
@@ -72,9 +71,3 @@ func main() {
 //	d.Unlock()
 //	ch <- count
 //}
-
-
-
-
-
-

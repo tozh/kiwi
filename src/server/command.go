@@ -1,8 +1,8 @@
 package server
 
 import (
-	."redigo/src/object"
-	."redigo/src/constant"
+	. "redigo/src/object"
+	. "redigo/src/constant"
 	"strings"
 	"strconv"
 )
@@ -13,8 +13,8 @@ import (
 // EX - expire in seconds
 // PX - expire in milliseconds
 func (s *Server) SetGenericCommand(c *Client, flags int64, key string) {
-	if (flags & OBJ_SET_NX != 0 && c.Db.Exist(key)) ||
-		(flags & OBJ_SET_XX != 0 && !c.Db.Exist(key)) {
+	if (flags&OBJ_SET_NX != 0 && c.Db.Exist(key)) ||
+		(flags&OBJ_SET_XX != 0 && !c.Db.Exist(key)) {
 		// addReply
 		return
 	}
@@ -29,12 +29,12 @@ func (s *Server) SetGenericCommand(c *Client, flags int64, key string) {
 
 func (s *Server) SetCommand(c *Client) {
 	flags := OBJ_SET_NO_FLAGS
-	for j:=int64(3); j<c.Argc;j++ {
+	for j := int64(3); j < c.Argc; j++ {
 		a := strings.ToUpper(c.Argv[j])
 
-		if a == "NX" && (flags & OBJ_SET_XX) != 0 {
+		if a == "NX" && (flags&OBJ_SET_XX) != 0 {
 			flags |= OBJ_SET_NX
-		} else if a == "XX" && (flags & OBJ_SET_NX) != 0 {
+		} else if a == "XX" && (flags&OBJ_SET_NX) != 0 {
 			flags |= OBJ_SET_XX
 		} else {
 			// addReply
@@ -140,7 +140,7 @@ func (s *Server) AppendCommand(c *Client) {
 	}
 }
 
-func (s *Server) DbGetOrReply(c *Client, key string, reply string) IObject{
+func (s *Server) DbGetOrReply(c *Client, key string, reply string) IObject {
 	o := c.Db.Get(c.Argv[1])
 	if o == nil {
 		//addReply
@@ -176,15 +176,15 @@ func (s *Server) GetSetCommand(c *Client) {
 }
 
 func (s *Server) MSetGenericCommand(c *Client, flags int64) {
-	if c.Argc % 2 == 0 {
+	if c.Argc%2 == 0 {
 		// addReplyError(c,"wrong number of arguments for MSET")
 		return
 	}
 	// check the nx flag
 	// The MSETNX sematic is to return zero and set nothing if one of keys exists
 	existKeyCount := 0
-	if flags & OBJ_SET_NX != 0 {
-		for j:=1; j<len(c.Argv); j+=2 {
+	if flags&OBJ_SET_NX != 0 {
+		for j := 1; j < len(c.Argv); j += 2 {
 			if c.Db.Exist(c.Argv[j]) {
 				existKeyCount++
 			}
@@ -194,7 +194,7 @@ func (s *Server) MSetGenericCommand(c *Client, flags int64) {
 			return
 		}
 	}
-	for j:=1;j<len(c.Argv); j+=2 {
+	for j := 1; j < len(c.Argv); j += 2 {
 		o := CreateStrObjectByStr(s, c.Argv[j+1])
 		c.Db.Set(c.Argv[j], o)
 	}
@@ -212,7 +212,7 @@ func (s *Server) MSetNxCommand(c *Client) {
 
 func MGetCommand(c *Client) {
 	// addReplyMultBulk()...
-	for j:=1; j<len(c.Argv); j++ {
+	for j := 1; j < len(c.Argv); j++ {
 		o := c.Db.Get(c.Argv[j])
 		if o == nil {
 			// addReply(c, s.Shared.NullBulk)
@@ -225,4 +225,3 @@ func MGetCommand(c *Client) {
 		}
 	}
 }
-

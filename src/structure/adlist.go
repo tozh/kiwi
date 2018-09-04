@@ -1,10 +1,11 @@
 package structure
 
-import ."redigo/src/constant"
+import . "redigo/src/constant"
+
 /* definition of List struct */
-type ListNode struct{
-	Prev *ListNode
-	Next *ListNode
+type ListNode struct {
+	Prev  *ListNode
+	Next  *ListNode
 	Value interface{}
 }
 
@@ -21,8 +22,8 @@ func (node *ListNode) ListNodeValue() interface{} {
 	return node.Value
 }
 
-type listIter struct{
-	Next *ListNode
+type listIter struct {
+	Next      *ListNode
 	Direction int
 }
 
@@ -48,8 +49,7 @@ func (iter *listIter) ListRewindTail(list *List) {
 	iter.Direction = ITERATION_DIRECTION_REVERSE_ORDER
 }
 
-
-type List struct{
+type List struct {
 	Head  *ListNode
 	Tail  *ListNode
 	Len   int64
@@ -57,7 +57,7 @@ type List struct{
 }
 
 /* List methods */
-func (list *List) ListLength() int64{
+func (list *List) ListLength() int64 {
 	return list.Len
 }
 
@@ -68,7 +68,6 @@ func (list *List) ListHead() *ListNode {
 func (list *List) ListTail() *ListNode {
 	return list.Tail
 }
-
 
 func (list *List) ListSetMatch(match func(value interface{}, key interface{}) bool) {
 	list.Match = match
@@ -120,7 +119,7 @@ func (list *List) ListInsertNode(oldNode *ListNode, value interface{}, after boo
 	if after {
 		node.Prev = oldNode
 		node.Next = oldNode.Next
-		if oldNode==list.Tail {
+		if oldNode == list.Tail {
 			list.Tail = &node
 		}
 	} else {
@@ -139,7 +138,7 @@ func (list *List) ListInsertNode(oldNode *ListNode, value interface{}, after boo
 	list.Len++
 }
 
-func (list *List) ListDelNode(node *ListNode){
+func (list *List) ListDelNode(node *ListNode) {
 	if node.Prev != nil {
 		node.Prev.Next = node.Next
 	} else {
@@ -166,12 +165,12 @@ func (list *List) ListSearchKey(key interface{}) *ListNode {
 	iter := list.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	node := iter.ListNext()
 
-	for node!=nil {
+	for node != nil {
 		if list.Match != nil {
 			if list.Match(node.Value, key) {
 				return node
 			}
-		}else {
+		} else {
 			if key == node.Value {
 				return node
 			}
@@ -188,16 +187,16 @@ func (list *List) ListSearchKey(key interface{}) *ListNode {
  * and so on. If the index is out of range NULL is returned. */
 func (list *List) ListIndex(index int) *ListNode {
 	node := ListNode{}
-	if index<0 {
+	if index < 0 {
 		index = (-index) - 1
 		node := list.Tail
-		for index>=0 && node!=nil {
+		for index >= 0 && node != nil {
 			node = node.Prev
 			index--
 		}
-	}else {
+	} else {
 		node := list.Head
-		for index>=0 && node!=nil {
+		for index >= 0 && node != nil {
 			node = node.Next
 			index--
 		}
@@ -206,7 +205,7 @@ func (list *List) ListIndex(index int) *ListNode {
 }
 
 func (list *List) ListRotate() {
-	if list.ListLength()<=1 {
+	if list.ListLength() <= 1 {
 		return
 	}
 	tail := list.Tail
@@ -242,7 +241,7 @@ func (list *List) ListJoin(other *List) {
 }
 
 /* methods for listIter */
-func (list *List) ListGetIterator(direction int) *listIter{
+func (list *List) ListGetIterator(direction int) *listIter {
 	iter := listIter{}
 	if direction == ITERATION_DIRECTION_INORDER {
 		iter.Next = list.Head
@@ -253,7 +252,6 @@ func (list *List) ListGetIterator(direction int) *listIter{
 	return &iter
 }
 
-
 /* functions for List, for Create, Dup*/
 func ListDup(list *List) *List {
 	cp := ListCreate()
@@ -262,8 +260,8 @@ func ListDup(list *List) *List {
 	}
 	cp.Match = list.Match
 	iter := list.ListGetIterator(ITERATION_DIRECTION_INORDER)
-	node:= iter.ListNext()
-	for node!=nil {
+	node := iter.ListNext()
+	for node != nil {
 		value := node.Value
 		cp.ListAddNodeTail(value)
 		node = iter.ListNext()
@@ -278,4 +276,3 @@ func ListCreate() *List {
 	list.Match = nil
 	return &list
 }
-
