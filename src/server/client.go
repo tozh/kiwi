@@ -39,6 +39,12 @@ type Client struct {
 	RequestType              int64 // Request protocol type: PROTO_REQ_*
 	MultiBulkLen             int64 // Number of multi bulk arguments left to read.
 	BulkLen                  int64 // Length of bulk argument in multi bulk request.
+	ReplyOff                 int64
+	ReplyAckOff              int64
+	ReplyAckTime             time.Duration
+	ReadReplyOff             int64
+	BType                    int64
+	Authenticated            int64
 }
 
 func (c *Client) WithFlags(flags int64) bool {
@@ -278,6 +284,14 @@ func (c *Client) Reset() {
 		c.DeleteFlags(CLIENT_REPLY_SKIP_NEXT)
 	}
 
+}
+
+/* Flag the transacation as DIRTY_EXEC so that EXEC will fail.
+ * Should be called every time there is an error while queueing a command. */
+func (c *Client) FlagTransaction() {
+	if c.WithFlags(CLIENT_MULTI) {
+		c.AddFlags(CLIENT_DIRTY_EXEC);
+	}
 }
 
 // functions for client

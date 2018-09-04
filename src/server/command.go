@@ -12,7 +12,7 @@ import (
 // XX - exist
 // EX - expire in seconds
 // PX - expire in milliseconds
-func (s *Server) SetGenericCommand(c *Client, flags int64, key string) {
+func SetGenericCommand(s *Server, c *Client, flags int64, key string) {
 	if (flags&OBJ_SET_NX != 0 && c.Db.Exist(key)) ||
 		(flags&OBJ_SET_XX != 0 && !c.Db.Exist(key)) {
 		// addReply
@@ -27,7 +27,7 @@ func (s *Server) SetGenericCommand(c *Client, flags int64, key string) {
 	// addReply
 }
 
-func (s *Server) SetCommand(c *Client) {
+func SetCommand(s *Server, c *Client) {
 	flags := OBJ_SET_NO_FLAGS
 	for j := int64(3); j < c.Argc; j++ {
 		a := strings.ToUpper(c.Argv[j])
@@ -43,18 +43,18 @@ func (s *Server) SetCommand(c *Client) {
 		// expire is not implemented now, so end here
 	}
 
-	s.SetGenericCommand(c, int64(flags), c.Argv[1])
+	SetGenericCommand(s, c, int64(flags), c.Argv[1])
 }
 
-func (s *Server) SetNxCommand(c *Client) {
-	s.SetGenericCommand(c, OBJ_SET_NX, c.Argv[1])
+func SetNxCommand(s *Server, c *Client) {
+	SetGenericCommand(s, c, OBJ_SET_NX, c.Argv[1])
 }
 
-func (s *Server) SetXxCommand(c *Client) {
-	s.SetGenericCommand(c, OBJ_SET_XX, c.Argv[1])
+func SetXxCommand(s *Server, c *Client) {
+	SetGenericCommand(s, c, OBJ_SET_XX, c.Argv[1])
 }
 
-func (s *Server) FlushAllCommand(c *Client) {
+func FlushAllCommand(s *Server, c *Client) {
 	if s.ConfigFlushAll {
 		c.Db.FlushAll()
 		// addReply
@@ -69,7 +69,7 @@ func (s *Server) FlushAllCommand(c *Client) {
 //	// addReply()
 //}
 
-func (s *Server) IncrDecrCommand(c *Client, incr int64) {
+func IncrDecrCommand(s *Server, c *Client, incr int64) {
 	o := c.Db.Get(c.Argv[1]).(*StrObject)
 	if o == nil {
 		o = CreateStrObjectByInt(s, incr)
@@ -88,31 +88,31 @@ func (s *Server) IncrDecrCommand(c *Client, incr int64) {
 	ReplaceStrObjectByInt(s, o, &oldValue, &value)
 }
 
-func (s *Server) IncrCommand(c *Client) {
-	s.IncrDecrCommand(c, 1)
+func IncrCommand(s *Server, c *Client) {
+	IncrDecrCommand(s, c, 1)
 }
 
-func (s *Server) DecrCommand(c *Client) {
-	s.IncrDecrCommand(c, -1)
+func DecrCommand(s *Server, c *Client) {
+	IncrDecrCommand(s, c, -1)
 }
 
-func (s *Server) IncrByCommand(c *Client) {
+func IncrByCommand(s *Server, c *Client) {
 	incr, err := strconv.ParseInt(c.Argv[2], 10, 64)
 	if err != nil {
 		return
 	}
-	s.IncrDecrCommand(c, incr)
+	IncrDecrCommand(s, c, incr)
 }
 
-func (s *Server) DecrByCommand(c *Client) {
+func DecrByCommand(s *Server, c *Client) {
 	decr, err := strconv.ParseInt(c.Argv[2], 10, 64)
 	if err != nil {
 		return
 	}
-	s.IncrDecrCommand(c, -decr)
+	IncrDecrCommand(s, c, -decr)
 }
 
-func (s *Server) StrLenCommand(c *Client) {
+func StrLenCommand(s *Server, c *Client) {
 	o := s.DbGetOrReply(c, c.Argv[1], s.Shared.NullBulk)
 	if o == nil {
 		return
@@ -126,7 +126,7 @@ func (s *Server) StrLenCommand(c *Client) {
 }
 
 // Cat strings
-func (s *Server) AppendCommand(c *Client) {
+func AppendCommand(s *Server, c *Client) {
 	o := c.Db.Get(c.Argv[1]).(*StrObject)
 	if o == nil {
 		o = CreateStrObjectByStr(s, c.Argv[2])
@@ -140,7 +140,7 @@ func (s *Server) AppendCommand(c *Client) {
 	}
 }
 
-func (s *Server) DbGetOrReply(c *Client, key string, reply string) IObject {
+func DbGetOrReply(s *Server, c *Client, key string, reply string) IObject {
 	o := c.Db.Get(c.Argv[1])
 	if o == nil {
 		//addReply
@@ -148,8 +148,8 @@ func (s *Server) DbGetOrReply(c *Client, key string, reply string) IObject {
 	return o
 }
 
-func (s *Server) GetGenericCommand(c *Client) int64 {
-	o := s.DbGetOrReply(c, c.Argv[1], s.Shared.NullBulk)
+func GetGenericCommand(s *Server, c *Client) int64 {
+	o := DbGetOrReply(s, c, c.Argv[1], s.Shared.NullBulk)
 	if o == nil {
 		return C_OK
 	}
@@ -162,12 +162,12 @@ func (s *Server) GetGenericCommand(c *Client) int64 {
 	}
 }
 
-func (s *Server) GetCommand(c *Client) {
-	s.GetGenericCommand(c)
+func GetCommand(s *Server, c *Client) {
+	GetGenericCommand(s, c)
 }
 
-func (s *Server) GetSetCommand(c *Client) {
-	if s.GetGenericCommand(c) == C_ERR {
+func GetSetCommand(s *Server, c *Client) {
+	if GetGenericCommand(s, c) == C_ERR {
 		return
 	}
 	o := CreateStrObjectByStr(s, c.Argv[2])
@@ -175,7 +175,7 @@ func (s *Server) GetSetCommand(c *Client) {
 	s.Dirty++
 }
 
-func (s *Server) MSetGenericCommand(c *Client, flags int64) {
+func MSetGenericCommand(s *Server, c *Client, flags int64) {
 	if c.Argc%2 == 0 {
 		// addReplyError(c,"wrong number of arguments for MSET")
 		return
@@ -202,15 +202,15 @@ func (s *Server) MSetGenericCommand(c *Client, flags int64) {
 	// addReply(c, s.Shared.CommandOne)
 }
 
-func (s *Server) MSetCommand(c *Client) {
-	s.MSetGenericCommand(c, OBJ_SET_NO_FLAGS)
+func MSetCommand(s *Server, c *Client) {
+	MSetGenericCommand(s, c, OBJ_SET_NO_FLAGS)
 }
 
-func (s *Server) MSetNxCommand(c *Client) {
-	s.MSetGenericCommand(c, OBJ_SET_NX)
+func MSetNxCommand(s *Server, c *Client) {
+	MSetGenericCommand(s, c, OBJ_SET_NX)
 }
 
-func MGetCommand(c *Client) {
+func MGetCommand(s *Server, c *Client) {
 	// addReplyMultBulk()...
 	for j := 1; j < len(c.Argv); j++ {
 		o := c.Db.Get(c.Argv[j])
@@ -223,5 +223,17 @@ func MGetCommand(c *Client) {
 				// addReplyBulk(c, o)
 			}
 		}
+	}
+}
+
+func AuthCommand(s *Server, c *Client) {
+	if s.RequirePassword==nil {
+		s.AddReplyError(c, "Client sent AUTH, but no password is set")
+	} else if c.Argv[1] == *s.RequirePassword {
+		c.Authenticated = 1
+		s.AddReply(c, s.Shared.Ok)
+	} else {
+		c.Authenticated = 0
+		s.AddReplyError(c, "invalid password")
 	}
 }

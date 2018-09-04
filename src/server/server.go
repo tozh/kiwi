@@ -31,7 +31,7 @@ import (
 //	DefragLater *List
 //}
 
-type CommandProcess int64
+type CommandProcess func(s *Server, c *Client)
 
 type Command struct {
 	Name  string
@@ -43,7 +43,8 @@ type Command struct {
 	KeyStep  int64
 	Msec     int64
 	Calls    int64
-	Process  *CommandProcess
+	Process  CommandProcess
+	//Process  func(s *Server, c *Client)
 }
 
 type Op struct {
@@ -69,8 +70,8 @@ type Server struct {
 	Hz           int64 // serverCron() calls frequency in hertz
 	Dbs          []*Db
 	DbNum        int64
-	Commands     map[interface{}]Command
-	OrigCommands map[interface{}]Command
+	Commands     map[string]*Command
+	OrigCommands map[string]*Command
 
 	UnixTime         time.Duration // UnixTime in millisecond
 	LruClock         int64         // Clock for LRU eviction
@@ -98,11 +99,12 @@ type Server struct {
 	MaxClients          int64
 	ProtectedMode       bool // Don't accept external connections.
 	Password            string
-	RequirePassword     bool
+	RequirePassword     *string
 	TcpKeepAlive        bool
 	Verbosity           int64 // loglevel in redis.conf
 	ProtoMaxBulkLen     int64
-
+	ClientsPaused       bool
+	ClientsPauseEndTime time.Duration
 	//Loading bool  // Server is loading date from disk if true
 	//LoadingTotalSize int64
 	//LoadingLoadedSize int64
@@ -412,7 +414,7 @@ func (s *Server) AcceptTcpConn(conn net.Conn, flags int64, ip string) {
 		conn.Write(err)
 		s.StatRejectedConn++
 	}
-	if s.ProtectedMode && s.BindAddrCount == 0 && !s.RequirePassword && ip != "" {
+	if s.ProtectedMode && s.BindAddrCount == 0 && s.RequirePassword == nil && ip != "" {
 		err := []byte(
 			`-DENIED Redis is running in protected mode because protected mode is enabled, no bind address was specified, no authentication password is requested to clients. In this mode 
 connections are only accepted from the loopback interface. 
@@ -618,9 +620,7 @@ func (s *Server) ProcessMultiBulkBuffer(c *Client) int64 {
 				pos = 0
 				if qblen < nulkNum+2 {
 					//	the only bulk
-					newBuf := make([]byte, nulkNum+2)
-					copy(newBuf, c.QueryBuf)
-					c.QueryBuf = newBuf
+					c.QueryBuf = append(c.QueryBuf, make([]byte, nulkNum+2-qblen)...)
 				}
 				c.BulkLen = int64(nulkNum)
 			}
@@ -650,12 +650,130 @@ func (s *Server) ProcessMultiBulkBuffer(c *Client) int64 {
 	return C_ERR
 }
 
-func (s *Server) ProcessInputBuffer(c *Client) {
-
+func (s *Server) PauseClients(end time.Duration) {
+	if !s.ClientsPaused || end > s.ClientsPauseEndTime {
+		s.ClientsPauseEndTime = end
+	}
+	s.ClientsPaused = true
 }
 
-func (s *Server) ProcessMultibulkBuffer(c *Client) {
+func (s *Server) ClientsArePasued() bool {
+	if s.ClientsPaused && s.ClientsPauseEndTime < s.UnixTime {
+		s.ClientsPaused = false
+		iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
+		for node := iter.ListNext(); node != nil; node = iter.ListNext() {
+			c := node.Value.(*Client)
+			if c.WithFlags(CLIENT_SLAVE | CLIENT_BLOCKED) {
+				continue
+			}
+			c.AddFlags(CLIENT_UNBLOCKED)
+			s.ClientsUnblocked.ListAddNodeTail(c)
+		}
+	}
+	return s.ClientsPaused
+}
 
+/* This function is called every time, in the client structure 'c', there is
+ * more query buffer to process, because we read more data from the socket
+ * or because a client was blocked and later reactivated, so there could be
+ * pending query buffer, already representing a full command, to process. */
+func (s *Server) ProcessInputBuffer(c *Client) {
+	s.CurrentClient = c
+	for len(c.QueryBuf) != 0 {
+		if !c.WithFlags(CLIENT_SLAVE) && s.ClientsArePasued() {
+			break
+		}
+		if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY | CLIENT_CLOSE_ASAP) {
+			break
+		}
+		if c.RequestType == 0 {
+			if c.QueryBuf[0] == '*' {
+				c.RequestType = PROTO_REQ_MULTIBULK
+			} else {
+				c.RequestType = PROTO_REQ_INLINE
+			}
+		}
+		if c.RequestType == PROTO_REQ_INLINE {
+			if s.ProcessInlineBuffer(c) != C_OK {
+				break
+			}
+		} else if c.RequestType == PROTO_REQ_MULTIBULK {
+			if s.ProcessMultiBulkBuffer(c) != C_ERR {
+				break
+			}
+		} else {
+			panic("Unknown request type")
+		}
+
+		if c.Argc == 0 {
+			c.Reset()
+		} else {
+			if s.ProcessCommand(c) == C_OK {
+				if c.WithFlags(CLIENT_MASTER) && !c.WithFlags(CLIENT_MULTI) {
+					/* Update the applied replication offset of our master. */
+					c.ReplyOff = c.ReadReplyOff - int64(len(c.QueryBuf))
+				}
+				if !c.WithFlags(CLIENT_BLOCKED) || c.BType != BLOCKED_MODULE {
+					c.Reset()
+				}
+			}
+			if s.CurrentClient == nil {
+				break
+			}
+		}
+	}
+	s.CurrentClient = nil
+}
+
+/* If this function gets called we already read a whole
+ * command, arguments are in the client argv/argc fields.
+ * processCommand() execute the command or prepare the
+ * server for a bulk read from the client.
+ *
+ * If C_OK is returned the client is still alive and valid and
+ * other operations can be performed by the caller. Otherwise
+ * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
+func (s *Server) ProcessCommand(c *Client) int64 {
+	if c.Argv[0] == "quit" {
+		/* The QUIT command is handled separately. Normal command procs will
+		 * go through checking for replication and QUIT will cause trouble
+		 * when FORCE_REPLICATION is enabled and would be implemented in
+		 * a regular command proc. */
+		s.AddReply(c, s.Shared.Ok)
+		c.AddFlags(CLIENT_CLOSE_AFTER_REPLY)
+		return C_ERR
+	}
+	c.Cmd = s.LookUpCommand(c.Argv[0])
+	c.LastCmd = c.Cmd
+	if c.Cmd == nil {
+		c.FlagTransaction()
+		s.AddReplyError(c, fmt.Sprintf("unknown command '%s'", c.Argv[0]))
+		return C_OK
+	}
+	if (c.Cmd.Arity > 0 && c.Cmd.Arity != c.Argc) || c.Argc < -c.Cmd.Arity {
+		c.FlagTransaction()
+		s.AddReplyError(c, fmt.Sprintf("wrong number of arguments for '%s' command", c.Argv[0]))
+		return C_OK
+	}
+	if (s.RequirePassword!=nil && c.Authenticated == 0) {
+		c.Cmd.Process = AuthCommand
+		if c.Cmd.Process AuthCommand {
+
+		}
+	}
+
+
+
+
+
+
+
+
+	return C_OK
+}
+
+func (s *Server) LookUpCommand(name string) *Command{
+	return s.Commands[name]
 }
 
 func (s *Server) SetProtocolError(err string, c *Client, pos int64) {

@@ -82,6 +82,20 @@ const CLIENT_LUA_DEBUG = 1 << 25       /* Run EVAL in debug mode. */
 const CLIENT_LUA_DEBUG_SYNC = 1 << 26  /* EVAL debugging without fork() */
 const CLIENT_MODULE = 1 << 27          /* Non connected client used by some module. */
 
+/* Client request types */
+const PROTO_REQ_INLINE = 1
+const PROTO_REQ_MULTIBULK = 2
+
+/* Client block type (btype field in client structure)
+ * if CLIENT_BLOCKED flag is set. */
+const BLOCKED_NONE = 0   /* Not blocked, no CLIENT_BLOCKED flag set. */
+const BLOCKED_LIST = 1   /* BLPOP & co. */
+const BLOCKED_WAIT = 2   /* WAIT for synchronous replication. */
+const BLOCKED_MODULE = 3 /* Blocked by a loadable module. */
+const BLOCKED_STREAM = 4 /* XREAD. */
+const BLOCKED_ZSET = 5   /* BZPOP et al. */
+const BLOCKED_NUM = 6    /* Number of blocked states. */
+
 /* Protocol and I/O related defines */
 const PROTO_MAX_QUERYBUF_LEN = 1024 * 1024 * 1024 /* 1GB max query buffer. */
 const PROTO_IOBUF_LEN = 1024 * 16                 /* Generic I/O buffer size */
