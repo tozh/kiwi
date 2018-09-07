@@ -4,14 +4,14 @@ import (
 	. "redigo/src/constant"
 	"time"
 	. "redigo/src/server"
-	"math"
+	. "redigo/src/structure"
 )
 
 type Object struct {
 	RType    int64
 	Encoding int64
 	Lru      int64
-	RefConut int64
+	//RefConut int64
 }
 
 type IntObject struct {
@@ -48,10 +48,10 @@ type IObject interface {
 	getEncodeInString() string
 	getLRU() int64
 	setLRU(lru int64)
-	getRefCount() int64
-	setRefCount(refCount int64)
-	IncrRefCount() int64
-	DecrRefCount() int64
+	//getRefCount() int64
+	//setRefCount(refCount int64)
+	//IncrRefCount() int64
+	//DecrRefCount() int64
 	RefreshLRUClock(s *Server)
 }
 
@@ -119,32 +119,32 @@ func (o *Object) setLRU(lru int64) {
 	o.Lru = lru
 }
 
-func (o *Object) getRefCount() int64 {
-	return o.RefConut
-}
-
-func (o *Object) setRefCount(refCount int64) {
-	o.RefConut = refCount
-}
-
-func (o *Object) IncrRefCount() int64 {
-	if o.RefConut != math.MaxInt64 {
-		o.RefConut--
-	}
-	return o.RefConut
-}
-
-func (o *Object) DecrRefCount() int64 {
-	if o.RType == OBJ_RTYPE_STR || o.RType == OBJ_RTYPE_INT {
-		if o.RefConut <= 0 {
-			panic("DecrRefCount against refcount <= 0")
-		}
-		if o.RefConut != math.MaxInt64 {
-			o.RefConut--
-		}
-	}
-	return o.RefConut
-}
+//func (o *Object) getRefCount() int64 {
+//	return o.RefConut
+//}
+//
+//func (o *Object) setRefCount(refCount int64) {
+//	o.RefConut = refCount
+//}
+//
+//func (o *Object) IncrRefCount() int64 {
+//	if o.RefConut != math.MaxInt64 {
+//		o.RefConut--
+//	}
+//	return o.RefConut
+//}
+//
+//func (o *Object) DecrRefCount() int64 {
+//	if o.RType == OBJ_RTYPE_STR || o.RType == OBJ_RTYPE_INT {
+//		if o.RefConut <= 0 {
+//			panic("DecrRefCount against refcount <= 0")
+//		}
+//		if o.RefConut != math.MaxInt64 {
+//			o.RefConut--
+//		}
+//	}
+//	return o.RefConut
+//}
 
 func (o *Object) RefreshLRUClock(s *Server) {
 	o.Lru = LRUClock(s)
@@ -156,7 +156,7 @@ func createObject(s *Server, rtype int64, encoding int64, ) Object {
 		RType:    rtype,
 		Encoding: encoding,
 		Lru:      LRUClock(s),
-		RefConut: 1,
+		//RefConut: 1,
 	}
 	return obj
 }

@@ -60,7 +60,7 @@ func CreateStrObjectByStr(s *Server, str string) *StrObject {
 func CreateStrObjectByInt(s *Server, i int64) *StrObject {
 	if IsSharedInt(i) {
 		o := s.Shared.Integers[i]
-		o.IncrRefCount()
+		//o.IncrRefCount()
 		return o
 	}
 	obj := createObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_INT)
@@ -77,7 +77,7 @@ func ReplaceStrObjectByInt(s *Server, o *StrObject, oldValue *int64, newValue *i
 		o.RefreshLRUClock(s)
 		return o
 	} else {
-		o.DecrRefCount()
+		//o.DecrRefCount()
 		return CreateStrObjectByInt(s, *newValue)
 	}
 }
@@ -104,15 +104,15 @@ func AppendStrObject(s *Server, o *StrObject, b string) (*StrObject, int64) {
 }
 
 func StrObjectEncode(s *Server, o *StrObject) *StrObject {
-	if !IsStrObjectString(o) || o.RefConut > 1 {
+	if !IsStrObjectString(o) {
 		return o
 	}
 
 	i, err := strconv.ParseInt(*o.Value.(*string), 10, 64)
 	if err == nil {
 		if IsSharedInt(i) {
-			o.DecrRefCount()
-			s.Shared.Integers[i].IncrRefCount()
+			//o.DecrRefCount()
+			//s.Shared.Integers[i].IncrRefCount()
 			return s.Shared.Integers[i]
 		} else {
 			o.Value = &i

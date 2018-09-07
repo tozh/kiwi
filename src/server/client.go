@@ -270,11 +270,11 @@ func (c *Client) CheckOutputBufferLimits(s *Server) bool {
 
 // resetClient prepare the client to process the next command
 func (c *Client) Reset() {
-	//var prevCmd *CommandProcess = nil
+	//var prevCmd CommandProcess = nil
 	//if c.Cmd != nil {
 	//	prevCmd = c.Cmd.Process
 	//}
-	c.Argv = make([]string, 0)
+	c.ResetArgv()
 	c.RequestType = 0
 	c.MultiBulkLen = 0
 	c.BulkLen = 1
@@ -284,7 +284,12 @@ func (c *Client) Reset() {
 		c.AddFlags(CLIENT_REPLY_SKIP)
 		c.DeleteFlags(CLIENT_REPLY_SKIP_NEXT)
 	}
+}
 
+func (c *Client) ResetArgv() {
+	c.Argc = 0
+	c.Cmd = nil
+	c.Argv = nil
 }
 
 /* Flag the transacation as DIRTY_EXEC so that EXEC will fail.

@@ -65,22 +65,23 @@ type Server struct {
 	UnixSocketPath string // UNIX socket path
 	//IpFileDesc []string  // TCP socket file descriptors
 	//SocketFileDesc string // Unix socket file descriptor
-	CurrentClient       *Client
-	Clients             *List // List of active clients
-	ClientsMap          map[int64]*Client
-	ClientsToClose      *List // Clients to close asynchronously
-	ClientsPendingWrite *List // There is to write or install handler.
-	ClientsUnblocked    *List //
-	ClientObufLimits    [CLIENT_TYPE_OBUF_COUNT]ClientBufferLimitsConfig
-	MaxClients          int64
-	ProtectedMode       bool // Don't accept external connections.
-	Password            string
-	RequirePassword     *string
-	TcpKeepAlive        bool
-	Verbosity           int64 // loglevel in redis.conf
-	ProtoMaxBulkLen     int64
-	ClientsPaused       bool
-	ClientsPauseEndTime time.Duration
+	CurrentClient        *Client
+	Clients              *List // List of active clients
+	ClientsMap           map[int64]*Client
+	ClientsToClose       *List // Clients to close asynchronously
+	//ClientsPendingWrite  *List // There is to write or install handler.
+	//ClientsUnblocked     *List //
+	ClientObufLimits     [CLIENT_TYPE_OBUF_COUNT]ClientBufferLimitsConfig
+	ClientMaxQueryBufLen int64
+	MaxClients           int64
+	ProtectedMode        bool // Don't accept external connections.
+	Password             string
+	RequirePassword      *string
+	TcpKeepAlive         bool
+	Verbosity            int64 // loglevel in redis.conf
+	ProtoMaxBulkLen      int64
+	ClientsPaused        bool
+	ClientsPauseEndTime  time.Duration
 	//Loading bool  // Server is loading date from disk if true
 	//LoadingTotalSize int64
 	//LoadingLoadedSize int64
@@ -127,6 +128,7 @@ type Server struct {
 	StatRejectedConn   int64
 	StatConnCount      int64
 	StatNetOutputBytes int64
+	StatNetInputBytes  int64
 	StatNumCommands    int64
 	ConfigFlushAll     bool
 	mutex              sync.Mutex
@@ -189,15 +191,29 @@ func (s *Server) UnLinkClient(c *Client) {
 		s.StatConnCount--
 		c.Conn = nil
 	}
-	if c.WithFlags(CLIENT_PENDING_WRITE) {
-		s.ClientsPendingWrite.ListDelNode(c.PendingWriteNode)
-		c.PendingWriteNode = nil
-		c.DeleteFlags(CLIENT_PENDING_WRITE)
-	}
-	if c.WithFlags(CLIENT_UNBLOCKED) {
-		s.ClientsUnblocked.ListDelNode(c.UnblockedNode)
-		c.UnblockedNode = nil
-		c.DeleteFlags(CLIENT_UNBLOCKED)
+	//if c.WithFlags(CLIENT_PENDING_WRITE) {
+	//	s.ClientsPendingWrite.ListDelNode(c.PendingWriteNode)
+	//	c.PendingWriteNode = nil
+	//	c.DeleteFlags(CLIENT_PENDING_WRITE)
+	//}
+	//if c.WithFlags(CLIENT_UNBLOCKED) {
+	//	s.ClientsUnblocked.ListDelNode(c.UnblockedNode)
+	//	c.UnblockedNode = nil
+	//	c.DeleteFlags(CLIENT_UNBLOCKED)
+	//}
+}
+
+func (s *Server) DeleteClient(c *Client) {
+	c.QueryBuf = nil
+	c.PendingWriteNode = nil
+//	unwatch all keys
+	c.Reply.ListEmpty()
+	c.Reply = nil
+	c.ResetArgv()
+	s.UnLinkClient(c)
+	if c.WithFlags(CLIENT_CLOSE_ASAP) {
+		ln := s.ClientsToClose.ListSearchKey(c)
+		s.ClientsToClose.ListDelNode(ln)
 	}
 }
 
@@ -222,10 +238,10 @@ func (s *Server) PrepareClientToWrite(c *Client) int64 {
 		return C_ERR
 	}
 
-	if !c.HasPendingReplies() && !(c.WithFlags(CLIENT_PENDING_WRITE)) {
-		c.AddFlags(CLIENT_PENDING_WRITE)
-		s.ClientsPendingWrite.ListAddNodeTail(c)
-	}
+	//if !c.HasPendingReplies() && !(c.WithFlags(CLIENT_PENDING_WRITE)) {
+	//	c.AddFlags(CLIENT_PENDING_WRITE)
+	//	s.ClientsPendingWrite.ListAddNodeTail(c)
+	//}
 	return C_OK
 }
 
@@ -465,7 +481,44 @@ func (s *Server) WriteToClient(c *Client) (written int64) {
 }
 
 func (s *Server) ReadQueryFromClient(c *Client) {
-
+	bufLen := int64(PROTO_IOBUF_LEN)
+	queryLen := int64(len(c.QueryBuf))
+	if c.RequestType == PROTO_REQ_MULTIBULK && c.MultiBulkLen != 0 && c.BulkLen != -1 && c.BulkLen >= PROTO_MBULK_BIG_ARG {
+		remaining := c.BulkLen + 2 - int64(queryLen)
+		if remaining < bufLen {
+			bufLen = remaining
+		}
+	}
+	if c.QueryBufPeak < queryLen {
+		c.QueryBufPeak = queryLen
+	}
+	readCount, err := c.Conn.Read(c.QueryBuf)
+	if err != nil {
+		return
+	}
+	if readCount == 0 {
+		return
+	}
+	c.LastInteraction = s.UnixTime
+	if c.WithFlags(CLIENT_MASTER) {
+		c.ReadReplyOff += int64(readCount)
+	}
+	s.StatNetOutputBytes += int64(readCount)
+	if int64(len(c.QueryBuf)) > s.ClientMaxQueryBufLen {
+		s.DeleteClient(c)
+		return
+	}
+	s.ProcessInputBuffer(c)
+	//if !c.WithFlags(CLIENT_MASTER) {
+	//	s.ProcessInputBuffer(c)
+	//} else {
+	//	preOff := c.ReplyOff
+	//	s.ProcessInputBuffer(c)
+	//	applied := c.ReplyOff - preOff
+	//	if applied != 0 {
+	//	//	do replication from master to slave
+	//	}
+	//}
 }
 
 /* Like processMultibulkBuffer(), but for the inline protocol instead of RESP,
@@ -635,21 +688,21 @@ func (s *Server) PauseClients(end time.Duration) {
 	s.ClientsPaused = true
 }
 
-func (s *Server) ClientsArePasued() bool {
-	if s.ClientsPaused && s.ClientsPauseEndTime < s.UnixTime {
-		s.ClientsPaused = false
-		iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
-		for node := iter.ListNext(); node != nil; node = iter.ListNext() {
-			c := node.Value.(*Client)
-			if c.WithFlags(CLIENT_SLAVE | CLIENT_BLOCKED) {
-				continue
-			}
-			c.AddFlags(CLIENT_UNBLOCKED)
-			s.ClientsUnblocked.ListAddNodeTail(c)
-		}
-	}
-	return s.ClientsPaused
-}
+//func (s *Server) ClientsArePasued() bool {
+//	if s.ClientsPaused && s.ClientsPauseEndTime < s.UnixTime {
+//		s.ClientsPaused = false
+//		iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
+//		for node := iter.ListNext(); node != nil; node = iter.ListNext() {
+//			c := node.Value.(*Client)
+//			if c.WithFlags(CLIENT_SLAVE | CLIENT_BLOCKED) {
+//				continue
+//			}
+//			c.AddFlags(CLIENT_UNBLOCKED)
+//			//s.ClientsUnblocked.ListAddNodeTail(c)
+//		}
+//	}
+//	return s.ClientsPaused
+//}
 
 /* This function is called every time, in the client structure 'c', there is
  * more query buffer to process, because we read more data from the socket
@@ -658,9 +711,9 @@ func (s *Server) ClientsArePasued() bool {
 func (s *Server) ProcessInputBuffer(c *Client) {
 	s.CurrentClient = c
 	for len(c.QueryBuf) != 0 {
-		if !c.WithFlags(CLIENT_SLAVE) && s.ClientsArePasued() {
-			break
-		}
+		//if !c.WithFlags(CLIENT_SLAVE) && s.ClientsArePasued() {
+		//	break
+		//}
 		if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY | CLIENT_CLOSE_ASAP) {
 			break
 		}
