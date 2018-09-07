@@ -15,22 +15,6 @@ import (
 	"time"
 )
 
-//type Object struct {
-//	ObjType int64
-//	Encoding int64
-//	Lru int64
-//	RefCount int64
-//	Ptr interface{}
-//}
-//
-//type RedisDb struct {
-//	Dict map[string]interface{}
-//	Expires map[*Object]int64
-//	Id int64
-//	AvgTTL int64
-//	DefragLater *List
-//}
-
 type ClientBufferLimitsConfig struct {
 	HardLimitBytes int64
 	SoftLimitBytes int64
@@ -144,6 +128,7 @@ func (s *Server) CreateClient(conn net.Conn) *Client {
 		}
 	}
 
+
 	createTime := s.UnixTime
 	var c = Client{
 		Id:               0,
@@ -170,6 +155,10 @@ func (s *Server) CreateClient(conn net.Conn) *Client {
 	}
 	c.GetNextClientId(s)
 	c.SelectDB(s, 0)
+	s.LinkClient(&c)
+
+
+
 	return &c
 }
 
@@ -432,32 +421,52 @@ func (s *Server) AddReplySubcommandSyntaxError(c *Client) {
 	s.AddReplyErrorFormat(c, "Unknown subcommand or wrong number of arguments for '%s'. Try %s HELP.", cmd, strings.ToUpper(cmd))
 }
 
-func (s *Server) AcceptUnixConn(conn net.Conn, flags int64) {
-	c := s.CreateClient(conn)
-	if c == nil {
-		conn.Close()
-	}
-	if s.Clients.ListLength() > s.MaxClients {
-		err := []byte("-ERR max number of clients reached\r\n")
-		conn.Write(err)
-		s.StatRejectedConn++
-	}
-	c.AddFlags(CLIENT_UNIX_SOCKET)
-	s.LinkClient(c)
+func (s *Server) AcceptUnixHandler(conn net.Conn, flags int64) {
+	//conn := AnetUnixServer()
+	//c := s.CreateClient(conn)
+	//if c == nil {
+	//	conn.Close()
+	//	s.CloseClient(c)
+	//}
+	//if s.Clients.ListLength() > s.MaxClients {
+	//	err := []byte("-ERR max number of clients reached\r\n")
+	//	conn.Write(err)
+	//	s.StatRejectedConn++
+	//	s.CloseClient(c)
+	//}
+	//c.AddFlags(CLIENT_UNIX_SOCKET)
+	//s.LinkClient(c)
+}
+func (s *Server) AcceptTcpHandler(conn net.Conn, flags int64) {
+	//conn := AnetUnixServer()
+	//c := s.CreateClient(conn)
+	//if c == nil {
+	//	conn.Close()
+	//	s.CloseClient(c)
+	//}
+	//if s.Clients.ListLength() > s.MaxClients {
+	//	err := []byte("-ERR max number of clients reached\r\n")
+	//	conn.Write(err)
+	//	s.StatRejectedConn++
+	//	s.CloseClient(c)
+	//}
+	//c.AddFlags(CLIENT_UNIX_SOCKET)
+	//s.LinkClient(c)
 }
 
-func (s *Server) AcceptTcpConn(conn net.Conn, flags int64, ip string) {
-
+func (s *Server) AcceptCommonHandler(conn net.Conn, flags int64, ip string) {
 	c := s.CreateClient(conn)
 	if c == nil {
 		conn.Close()
+		s.CloseClient(c)
 	}
 	if s.Clients.ListLength() > s.MaxClients {
 		err := []byte("-ERR max number of clients reached\r\n")
 		conn.Write(err)
 		s.StatRejectedConn++
+		s.CloseClient(c)
 	}
-	if s.ProtectedMode && s.BindAddrCount == 0 && s.RequirePassword == nil && ip != "" {
+	if s.ProtectedMode && s.BindAddrCount == 0 && s.RequirePassword == nil && flags&CLIENT_UNIX_SOCKET==0 && ip != "" {
 		err := []byte(
 			`-DENIED Redis is running in protected mode because protected mode is enabled, no bind address was specified, no authentication password is requested to clients. In this mode 
 connections are only accepted from the loopback interface. 
@@ -473,8 +482,8 @@ NOTE: You only need to do one of the above things in order for the server to sta
 		conn.Write(err)
 		s.StatRejectedConn++
 	}
-	c.AddFlags(0)
-	s.LinkClient(c)
+	c.AddFlags(flags)
+	//s.LinkClient(c)  // should put in the createClient
 }
 
 // Write data in output buffers to client.
@@ -529,46 +538,6 @@ func (s *Server) WriteToClient(c *Client) (written int64) {
 	return written
 }
 
-func (s *Server) ReadQueryFromClient(c *Client) {
-	bufLen := int64(PROTO_IOBUF_LEN)
-	queryLen := int64(len(c.QueryBuf))
-	if c.RequestType == PROTO_REQ_MULTIBULK && c.MultiBulkLen != 0 && c.BulkLen != -1 && c.BulkLen >= PROTO_MBULK_BIG_ARG {
-		remaining := c.BulkLen + 2 - int64(queryLen)
-		if remaining < bufLen {
-			bufLen = remaining
-		}
-	}
-	if c.QueryBufPeak < queryLen {
-		c.QueryBufPeak = queryLen
-	}
-	readCount, err := c.Conn.Read(c.QueryBuf)
-	if err != nil {
-		return
-	}
-	if readCount == 0 {
-		return
-	}
-	c.LastInteraction = s.UnixTime
-	if c.WithFlags(CLIENT_MASTER) {
-		c.ReadReplyOff += int64(readCount)
-	}
-	s.StatNetOutputBytes += int64(readCount)
-	if int64(len(c.QueryBuf)) > s.ClientMaxQueryBufLen {
-		s.CloseClient(c)
-		return
-	}
-	s.ProcessInputBuffer(c)
-	//if !c.WithFlags(CLIENT_MASTER) {
-	//	s.ProcessInputBuffer(c)
-	//} else {
-	//	preOff := c.ReplyOff
-	//	s.ProcessInputBuffer(c)
-	//	applied := c.ReplyOff - preOff
-	//	if applied != 0 {
-	//	//	do replication from master to slave
-	//	}
-	//}
-}
 
 /* Like processMultibulkBuffer(), but for the inline protocol instead of RESP,
  * this function consumes the client query buffer and creates a command ready
@@ -730,6 +699,48 @@ func (s *Server) ProcessMultiBulkBuffer(c *Client) int64 {
 	return C_ERR
 }
 
+func (s *Server) ReadQueryFromClient(c *Client) {
+	bufLen := int64(PROTO_IOBUF_LEN)
+	queryLen := int64(len(c.QueryBuf))
+	if c.RequestType == PROTO_REQ_MULTIBULK && c.MultiBulkLen != 0 && c.BulkLen != -1 && c.BulkLen >= PROTO_MBULK_BIG_ARG {
+		remaining := c.BulkLen + 2 - int64(queryLen)
+		if remaining < bufLen {
+			bufLen = remaining
+		}
+	}
+	if c.QueryBufPeak < queryLen {
+		c.QueryBufPeak = queryLen
+	}
+	readCount, err := c.Conn.Read(c.QueryBuf)
+	if err != nil {
+		return
+	}
+	if readCount == 0 {
+		return
+	}
+	c.LastInteraction = s.UnixTime
+	//if c.WithFlags(CLIENT_MASTER) {
+	//	c.ReadReplyOff += int64(readCount)
+	//}
+	s.StatNetInputBytes += int64(readCount)
+	if int64(len(c.QueryBuf)) > s.ClientMaxQueryBufLen {
+		s.CloseClient(c)
+		return
+	}
+	s.ProcessInputBuffer(c)
+	//if !c.WithFlags(CLIENT_MASTER) {
+	//	s.ProcessInputBuffer(c)
+	//} else {
+	//	preOff := c.ReplyOff
+	//	s.ProcessInputBuffer(c)
+	//	applied := c.ReplyOff - preOff
+	//	if applied != 0 {
+	//	//	do replication from master to slave
+	//	}
+	//}
+}
+
+
 func (s *Server) PauseClients(end time.Duration) {
 	if !s.ClientsPaused || end > s.ClientsPauseEndTime {
 		s.ClientsPauseEndTime = end
@@ -737,21 +748,21 @@ func (s *Server) PauseClients(end time.Duration) {
 	s.ClientsPaused = true
 }
 
-//func (s *Server) ClientsArePasued() bool {
-//	if s.ClientsPaused && s.ClientsPauseEndTime < s.UnixTime {
-//		s.ClientsPaused = false
-//		iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
-//		for node := iter.ListNext(); node != nil; node = iter.ListNext() {
-//			c := node.Value.(*Client)
-//			if c.WithFlags(CLIENT_SLAVE | CLIENT_BLOCKED) {
-//				continue
-//			}
-//			c.AddFlags(CLIENT_UNBLOCKED)
-//			//s.ClientsUnblocked.ListAddNodeTail(c)
-//		}
-//	}
-//	return s.ClientsPaused
-//}
+func (s *Server) ClientsArePasued() bool {
+	if s.ClientsPaused && s.ClientsPauseEndTime < s.UnixTime {
+		s.ClientsPaused = false
+		iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
+		for node := iter.ListNext(); node != nil; node = iter.ListNext() {
+			c := node.Value.(*Client)
+			if c.WithFlags(CLIENT_SLAVE | CLIENT_BLOCKED) {
+				continue
+			}
+			c.AddFlags(CLIENT_UNBLOCKED)
+			//s.ClientsUnblocked.ListAddNodeTail(c)
+		}
+	}
+	return s.ClientsPaused
+}
 
 /* This function is called every time, in the client structure 'c', there is
  * more query buffer to process, because we read more data from the socket

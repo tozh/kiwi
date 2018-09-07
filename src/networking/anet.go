@@ -87,6 +87,8 @@ func AnetAccept(err *string, listener net.Listener) net.Conn {
 			AnetSetErrorFormat(err, "Accept error: %s", error)
 			continue
 		}
+		//会打断for 应该让for一直存在
+		//这块代码重写
 		return conn
 	}
 }
