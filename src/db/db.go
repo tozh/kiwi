@@ -4,6 +4,7 @@ import (
 	"strconv"
 	. "redigo/src/object"
 	. "redigo/src/constant"
+	"sync"
 )
 
 type Db struct {
@@ -13,6 +14,7 @@ type Db struct {
 	//AvgTTL int64
 	//WatchedKeys map[string] int64
 	//DefragLater *List
+	mutex sync.RWMutex
 }
 
 func getStrByStrObject(key *StrObject) string {
@@ -24,6 +26,8 @@ func getStrByStrObject(key *StrObject) string {
 }
 
 func (db *Db) Get(key string) IObject {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
 	return db.Dict[key]
 }
 
@@ -32,6 +36,8 @@ func (db *Db) Get(key string) IObject {
 //}
 
 func (db *Db) RandGet() IObject {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
 	for _, value := range db.Dict {
 		return value
 	}
@@ -39,11 +45,15 @@ func (db *Db) RandGet() IObject {
 }
 
 func (db *Db) Set(key string, ptr IObject) {
+	db.mutex.Lock()
 	db.Dict[key] = ptr
+	db.mutex.Unlock()
 }
 
 func (db *Db) Delete(key string) {
+	db.mutex.Lock()
 	delete(db.Dict, key)
+	db.mutex.Unlock()
 }
 
 func (db *Db) SetNx(key string, ptr IObject) bool {
@@ -70,9 +80,13 @@ func (db *Db) Exist(key string) bool {
 }
 
 func (db *Db) Size() int64 {
+	db.mutex.Lock()
+	defer db.mutex.RUnlock()
 	return int64(len(db.Dict))
 }
 
 func (db *Db) FlushAll() {
+	db.mutex.Lock()
 	db.Dict = make(map[string]IObject)
+	db.mutex.Unlock()
 }
