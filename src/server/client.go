@@ -6,9 +6,9 @@ import (
 	. "redigo/src/constant"
 	"net"
 	"time"
-	"bytes"
 	"fmt"
 	"unsafe"
+	"bytes"
 )
 
 type Client struct {
@@ -94,21 +94,7 @@ func (c *Client) HasPendingReplies() bool {
 	return c.BufPos != 0 || c.Reply.ListLength() != 0
 }
 
-func (c *Client) AddReplyToBuffer(str string) int64 {
-	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
-		return C_OK
-	}
-	if c.Reply.ListLength() > 0 {
-		return C_ERR
-	}
-	available := cap(c.Buf)
-	if len(str) > available {
-		return C_ERR
-	}
-	copy(c.Buf[c.BufPos:], str)
-	c.BufPos += int64(len(str))
-	return C_OK
-}
+
 
 func (c *Client) Write(b []byte) (int64, error) {
 	n, err := c.Conn.Write(b)
@@ -120,15 +106,136 @@ func (c *Client) Read(b []byte) (int64, error) {
 	return int64(n), err
 }
 
-func (c *Client) AddReplyStringToList(str string) {
-	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
-		return
+
+
+
+func (c *Client) GetClientType() int64 {
+	if c.WithFlags(CLIENT_MASTER) {
+		return CLIENT_TYPE_MASTER
 	}
-	c.Reply.ListAddNodeTail(&str)
-	c.ReplySize += int64(len(str))
+	if c.WithFlags(CLIENT_SLAVE) && !c.WithFlags(CLIENT_MONITOR) {
+		return CLIENT_TYPE_SLAVE
+	}
+	if c.WithFlags(CLIENT_TYPE_PUBSUB) {
+		return CLIENT_TYPE_PUBSUB
+	}
+	return CLIENT_TYPE_NORMAL
 }
 
-func (c *Client) CatClientInfoString(s *Server) string {
+func (c *Client) GetClientTypeByName(name string) int64 {
+	switch name {
+	case "normal":
+		return CLIENT_TYPE_NORMAL
+	case "slave":
+		return CLIENT_TYPE_SLAVE
+	case "pubsub":
+		return CLIENT_TYPE_PUBSUB
+	case "master":
+		return CLIENT_TYPE_MASTER
+	default:
+		return -1
+	}
+}
+
+func (c *Client) GetClientTypeName(ctype int64) string {
+	switch ctype {
+	case CLIENT_TYPE_NORMAL:
+		return "normal"
+	case CLIENT_TYPE_SLAVE:
+		return "slave"
+	case CLIENT_TYPE_PUBSUB:
+		return "pubsub"
+	case CLIENT_TYPE_MASTER:
+		return "master"
+	default:
+		return ""
+	}
+}
+
+func (c *Client) GetOutputBufferMemoryUsage() int64 {
+	listNodeSize := int64(unsafe.Sizeof(ListNode{}))
+	listSize := int64(unsafe.Sizeof(List{}))
+	return c.ReplySize + c.Reply.ListLength()*listNodeSize + listSize
+}
+
+
+// resetClient prepare the client to process the next command
+func (c *Client) Reset() {
+	//var prevCmd CommandProcess = nil
+	//if c.Cmd != nil {
+	//	prevCmd = c.Cmd.Process
+	//}
+	c.ResetArgv()
+	c.RequestType = 0
+	c.MultiBulkLen = 0
+	c.BulkLen = 1
+
+	c.DeleteFlags(CLIENT_REPLY_SKIP)
+	if c.WithFlags(CLIENT_REPLY_SKIP_NEXT) {
+		c.AddFlags(CLIENT_REPLY_SKIP)
+		c.DeleteFlags(CLIENT_REPLY_SKIP_NEXT)
+	}
+}
+
+func (c *Client) ResetArgv() {
+	c.Argc = 0
+	c.Cmd = nil
+	c.Argv = nil
+}
+
+/* Flag the transacation as DIRTY_EXEC so that EXEC will fail.
+* Should be called every time there is an error while queueing a command. */
+//func (c *Client) FlagTransaction() {
+//	if c.WithFlags(CLIENT_MULTI) {
+//		c.AddFlags(CLIENT_DIRTY_EXEC);
+//	}
+//}
+//
+//func (c *Client) DiscardTransation() {
+//
+//}
+
+// functions for client
+func CopyClientOutputBuffer(dst *Client, src *Client) {
+	dst.Reply.ListEmpty()
+	dst.Reply = ListDup(src.Reply)
+	copy(dst.Buf, src.Buf[0:src.BufPos])
+	dst.BufPos = src.BufPos
+	dst.ReplySize = src.ReplySize
+}
+
+
+func CheckOutputBufferLimits(s *Server, c *Client) bool {
+	usedMem := c.GetOutputBufferMemoryUsage()
+	ctype := c.GetClientType()
+	hard := false
+	soft := false
+	if ctype == CLIENT_TYPE_MASTER {
+		ctype = CLIENT_TYPE_NORMAL
+	}
+	if s.ClientObufLimits[ctype].HardLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].HardLimitBytes {
+		hard = true
+	}
+	if s.ClientObufLimits[ctype].SoftLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].SoftLimitBytes {
+		soft = true
+	}
+	if soft == true {
+		if c.ObufSoftLimitReachedTime == 0 {
+			c.ObufSoftLimitReachedTime = s.UnixTime
+			soft = false /* First time we see the soft limit reached */
+		} else {
+			elapsed := s.UnixTime - c.ObufSoftLimitReachedTime
+			if elapsed <= s.ClientObufLimits[ctype].SoftLimitTime {
+				soft = false
+			}
+		}
+	} else {
+		c.ObufSoftLimitReachedTime = 0
+	}
+	return soft || hard
+}
+
+func CatClientInfoString(s *Server, c *Client) string {
 	flags := bytes.Buffer{}
 	if c.WithFlags(CLIENT_SLAVE) {
 		if c.WithFlags(CLIENT_MONITOR) {
@@ -183,132 +290,4 @@ func (c *Client) CatClientInfoString(s *Server) string {
 	clientFmt := "id=%d addr=%s conn=%s name=%s age=%d idle=%d flags=%s db=%d cmd=%s"
 	return fmt.Sprintf(clientFmt, c.Id, c.GetPeerId(s), c.Conn.LocalAddr().String(), c.Name, (s.UnixTime - c.CreateTime).Nanoseconds()/1000,
 		(s.UnixTime - c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.Id, cmd)
-}
-
-func (c *Client) ClientCommand() {
-
-}
-
-func (c *Client) GetClientType() int64 {
-	if c.WithFlags(CLIENT_MASTER) {
-		return CLIENT_TYPE_MASTER
-	}
-	if c.WithFlags(CLIENT_SLAVE) && !c.WithFlags(CLIENT_MONITOR) {
-		return CLIENT_TYPE_SLAVE
-	}
-	if c.WithFlags(CLIENT_TYPE_PUBSUB) {
-		return CLIENT_TYPE_PUBSUB
-	}
-	return CLIENT_TYPE_NORMAL
-}
-
-func (c *Client) GetClientTypeByName(name string) int64 {
-	switch name {
-	case "normal":
-		return CLIENT_TYPE_NORMAL
-	case "slave":
-		return CLIENT_TYPE_SLAVE
-	case "pubsub":
-		return CLIENT_TYPE_PUBSUB
-	case "master":
-		return CLIENT_TYPE_MASTER
-	default:
-		return -1
-	}
-}
-
-func (c *Client) GetClientTypeName(ctype int64) string {
-	switch ctype {
-	case CLIENT_TYPE_NORMAL:
-		return "normal"
-	case CLIENT_TYPE_SLAVE:
-		return "slave"
-	case CLIENT_TYPE_PUBSUB:
-		return "pubsub"
-	case CLIENT_TYPE_MASTER:
-		return "master"
-	default:
-		return ""
-	}
-}
-
-func (c *Client) GetOutputBufferMemoryUsage() int64 {
-	listNodeSize := int64(unsafe.Sizeof(ListNode{}))
-	listSize := int64(unsafe.Sizeof(List{}))
-	return c.ReplySize + c.Reply.ListLength()*listNodeSize + listSize
-}
-
-func (c *Client) CheckOutputBufferLimits(s *Server) bool {
-	usedMem := c.GetOutputBufferMemoryUsage()
-	ctype := c.GetClientType()
-	hard := false
-	soft := false
-	if ctype == CLIENT_TYPE_MASTER {
-		ctype = CLIENT_TYPE_NORMAL
-	}
-	if s.ClientObufLimits[ctype].HardLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].HardLimitBytes {
-		hard = true
-	}
-	if s.ClientObufLimits[ctype].SoftLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].SoftLimitBytes {
-		soft = true
-	}
-	if soft == true {
-		if c.ObufSoftLimitReachedTime == 0 {
-			c.ObufSoftLimitReachedTime = s.UnixTime
-			soft = false /* First time we see the soft limit reached */
-		} else {
-			elapsed := s.UnixTime - c.ObufSoftLimitReachedTime
-			if elapsed <= s.ClientObufLimits[ctype].SoftLimitTime {
-				soft = false
-			}
-		}
-	} else {
-		c.ObufSoftLimitReachedTime = 0
-	}
-	return soft || hard
-}
-
-// resetClient prepare the client to process the next command
-func (c *Client) Reset() {
-	//var prevCmd CommandProcess = nil
-	//if c.Cmd != nil {
-	//	prevCmd = c.Cmd.Process
-	//}
-	c.ResetArgv()
-	c.RequestType = 0
-	c.MultiBulkLen = 0
-	c.BulkLen = 1
-
-	c.DeleteFlags(CLIENT_REPLY_SKIP)
-	if c.WithFlags(CLIENT_REPLY_SKIP_NEXT) {
-		c.AddFlags(CLIENT_REPLY_SKIP)
-		c.DeleteFlags(CLIENT_REPLY_SKIP_NEXT)
-	}
-}
-
-func (c *Client) ResetArgv() {
-	c.Argc = 0
-	c.Cmd = nil
-	c.Argv = nil
-}
-
-/* Flag the transacation as DIRTY_EXEC so that EXEC will fail.
-* Should be called every time there is an error while queueing a command. */
-func (c *Client) FlagTransaction() {
-	if c.WithFlags(CLIENT_MULTI) {
-		c.AddFlags(CLIENT_DIRTY_EXEC);
-	}
-}
-
-func (c *Client) DiscardTransation() {
-
-}
-
-// functions for client
-func CopyClientOutputBuffer(dst *Client, src *Client) {
-	dst.Reply.ListEmpty()
-	dst.Reply = ListDup(src.Reply)
-	copy(dst.Buf, src.Buf[0:src.BufPos])
-	dst.BufPos = src.BufPos
-	dst.ReplySize = src.ReplySize
 }

@@ -280,6 +280,11 @@ var AuthCommand CommandProcess = func(s *Server, c *Client) {
 	}
 }
 
+var ClientCommand CommandProcess = func (s *Server, c *Client) {
+
+}
+
+
 //var ExecCommand CommandProcess = func(s *Server, c *Client) {
 //	// TODO:finish this function
 //	return

@@ -65,10 +65,10 @@ type Server struct {
 	UnixSocketPath string // UNIX socket path
 	//IpFileDesc []string  // TCP socket file descriptors
 	//SocketFileDesc string // Unix socket file descriptor
-	CurrentClient        *Client
-	Clients              *List // List of active clients
-	ClientsMap           map[int64]*Client
-	ClientsToClose       *List // Clients to close asynchronously
+	CurrentClient  *Client
+	Clients        *List // List of active clients
+	ClientsMap     map[int64]*Client
+	ClientsToClose *List // Clients to close asynchronously
 	//ClientsPendingWrite  *List // There is to write or install handler.
 	//ClientsUnblocked     *List //
 	ClientObufLimits     [CLIENT_TYPE_OBUF_COUNT]ClientBufferLimitsConfig
@@ -203,16 +203,34 @@ func (s *Server) UnLinkClient(c *Client) {
 	//}
 }
 
-func (s *Server) DeleteClient(c *Client) {
+func (s *Server) CloseClient(c *Client) {
 	c.QueryBuf = nil
 	c.PendingWriteNode = nil
-//	unwatch all keys
+	//	TODO unwatch all keys
 	c.Reply.ListEmpty()
 	c.Reply = nil
 	c.ResetArgv()
 	s.UnLinkClient(c)
 	if c.WithFlags(CLIENT_CLOSE_ASAP) {
 		ln := s.ClientsToClose.ListSearchKey(c)
+		s.ClientsToClose.ListDelNode(ln)
+	}
+}
+
+func (s *Server) CloseClientAsync(c *Client) {
+	if c.WithFlags(CLIENT_CLOSE_ASAP) {
+		return
+	}
+	c.AddFlags(CLIENT_CLOSE_ASAP)
+	s.ClientsToClose.ListAddNodeTail(c)
+}
+
+func (s *Server) CloseClientsInAsyncList() {
+	for s.ClientsToClose.ListLength() != 0 {
+		ln := s.ClientsToClose.ListHead()
+		c := ln.Value.(*Client)
+		c.DeleteFlags(CLIENT_CLOSE_ASAP)
+		s.CloseClient(c)
 		s.ClientsToClose.ListDelNode(ln)
 	}
 }
@@ -245,20 +263,51 @@ func (s *Server) PrepareClientToWrite(c *Client) int64 {
 	return C_OK
 }
 
-func (s *Server) CloseClientAsync(c *Client) {
-	if c.Flags&CLIENT_CLOSE_ASAP != 0 || c.Flags&CLIENT_LUA != 0 {
+func (s *Server) AddReplyToBuffer(c *Client, str string) int64 {
+	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
+		return C_OK
+	}
+	if c.Reply.ListLength() > 0 {
+		return C_ERR
+	}
+	available := cap(c.Buf)
+	if len(str) > available {
+		return C_ERR
+	}
+	copy(c.Buf[c.BufPos:], str)
+	c.BufPos += int64(len(str))
+	return C_OK
+}
+
+func (s *Server) AddReplyToList(c *Client, str string) {
+	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
 		return
 	}
-	c.AddFlags(CLIENT_CLOSE_ASAP)
-	s.ClientsToClose.ListAddNodeTail(c)
+	if c.Reply.ListLength() == 0 {
+		c.Reply.ListAddNodeTail(&str)
+		c.ReplySize += int64(len(str))
+	} else {
+		ln := c.Reply.ListTail()
+		tail := *ln.Value.(*string)
+		if tail != "" && (len(tail) >= len(str) || len(tail)+len(str) < PROTO_REPLY_CHUNK_BYTES) {
+			tail = CatString(tail, str)
+			ln.Value = &tail
+			c.ReplySize += int64(len(str))
+		} else {
+			c.Reply.ListAddNodeTail(&str)
+			c.ReplySize += int64(len(str))
+		}
+
+	}
+	AsyncCloseClientOnOutputBufferLimitReached(s, c)
 }
 
 func (s *Server) AddReply(c *Client, str string) {
 	if s.PrepareClientToWrite(c) != C_OK {
 		return
 	}
-	if c.AddReplyToBuffer(str) != C_OK {
-		c.AddReplyStringToList(str)
+	if s.AddReplyToBuffer(c, str) != C_OK {
+		s.AddReplyToList(c, str)
 	}
 }
 
@@ -505,7 +554,7 @@ func (s *Server) ReadQueryFromClient(c *Client) {
 	}
 	s.StatNetOutputBytes += int64(readCount)
 	if int64(len(c.QueryBuf)) > s.ClientMaxQueryBufLen {
-		s.DeleteClient(c)
+		s.CloseClient(c)
 		return
 	}
 	s.ProcessInputBuffer(c)
@@ -815,9 +864,9 @@ func (s *Server) Call(c *Client, flags int64) {
 	if dirty < 0 {
 		dirty = 0
 	}
-	if s.Loading && c.WithFlags(CLIENT_LUA) {
-		flags &= ^(CMD_CALL_SLOWLOG | CMD_CALL_STATS)
-	}
+	//if s.Loading && c.WithFlags(CLIENT_LUA) {
+	//	flags &= ^(CMD_CALL_SLOWLOG | CMD_CALL_STATS)
+	//}
 
 	///* Log the command into the Slow log if needed, and populate the
 	//* per-command statistics that we show in INFO commandstats. */
@@ -906,17 +955,17 @@ func (s *Server) ProcessCommand(c *Client) int64 {
 	c.Cmd = s.LookUpCommand(c.Argv[0])
 	c.LastCmd = c.Cmd
 	if c.Cmd == nil {
-		c.FlagTransaction()
+		//c.FlagTransaction()
 		s.AddReplyError(c, fmt.Sprintf("unknown command '%s'", c.Argv[0]))
 		return C_OK
 	}
 	if (c.Cmd.Arity > 0 && c.Cmd.Arity != c.Argc) || c.Argc < -c.Cmd.Arity {
-		c.FlagTransaction()
+		//c.FlagTransaction()
 		s.AddReplyError(c, fmt.Sprintf("wrong number of arguments for '%s' command", c.Argv[0]))
 		return C_OK
 	}
 	if s.RequirePassword != nil && c.Authenticated == 0 && &c.Cmd.Process != &AuthCommand {
-		c.FlagTransaction()
+		//c.FlagTransaction()
 		s.AddReplyError(c, s.Shared.NoAuthErr)
 		return C_OK
 	}
@@ -952,7 +1001,7 @@ func (s *Server) ProcessCommand(c *Client) int64 {
 			return C_ERR
 		}
 		if c.Cmd.WithFlags(CMD_DENYOOM) && result == C_ERR {
-			c.FlagTransaction()
+			//c.FlagTransaction()
 			s.AddReplyError(c, s.Shared.OOMErr)
 			return C_OK
 		}
@@ -1107,8 +1156,18 @@ func (s *Server) GetAllClientInfoString(ctype int64) string {
 		if ctype != -1 && c.GetClientType() != ctype {
 			continue
 		}
-		str.WriteString(c.CatClientInfoString(s))
+		str.WriteString(CatClientInfoString(s, c))
 		str.WriteByte('\n')
 	}
 	return str.String()
+}
+
+func AsyncCloseClientOnOutputBufferLimitReached(s *Server, c *Client) {
+	if c.ReplySize == 0 || c.WithFlags(CLIENT_CLOSE_ASAP) {
+		return
+	}
+	if CheckOutputBufferLimits(s, c) {
+		clientInfo := CatClientInfoString(s, c)
+		//TODO
+	}
 }
