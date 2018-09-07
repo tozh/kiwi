@@ -82,22 +82,25 @@ func ReplaceStrObjectByInt(s *Server, o *StrObject, oldValue *int64, newValue *i
 	}
 }
 
-func AppendStrObject(s *Server, o *StrObject, b string) *StrObject {
+func AppendStrObject(s *Server, o *StrObject, b string) (*StrObject, int64) {
+	var length int64
 	if b == "" {
-		return o
+		length = StrObjectLength(o)
+		return o, length
 	}
 	if IsStrObjectString(o) {
 		str := CatString(*o.Value.(*string), b)
 		o.Value = &str
+		length = int64(len(str))
 	}
 	if IsStrObjectInt(o) {
 		str := strconv.FormatInt(*o.Value.(*int64), 10)
 		str = CatString(str, b)
 		o.Value = &str
 		o.setEncode(OBJ_ENCODING_STR)
+		length = int64(len(str))
 	}
-
-	return StrObjectEncode(s, o)
+	return StrObjectEncode(s, o), length
 }
 
 func StrObjectEncode(s *Server, o *StrObject) *StrObject {
@@ -117,6 +120,19 @@ func StrObjectEncode(s *Server, o *StrObject) *StrObject {
 		}
 	}
 	return o
+}
+
+func StrObjectLength(o *StrObject) int64 {
+	if o.RType != OBJ_RTYPE_STR {
+		return 0
+	}
+	if o.Encoding == OBJ_ENCODING_STR {
+		return int64(len(*o.Value.(*string)))
+	} else if o.Encoding == OBJ_ENCODING_INT {
+		str := strconv.FormatInt(*o.Value.(*int64), 10)
+		return int64(len(str))
+	}
+	return 0
 }
 
 /* Get a decoded version of an encoded object (returned as a new object).

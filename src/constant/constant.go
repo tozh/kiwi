@@ -134,3 +134,37 @@ const LL_NOTICE = 2
 const LL_WARNING = 3
 const LL_RAW = (1 << 10) /* Modifier to log without timestamp */
 const CONFIG_DEFAULT_VERBOSITY = LL_NOTICE
+
+/* Command flags. Please check the command table defined in the redis.c file
+ * for more information about the meaning of every flag. */
+const CMD_WRITE = 1 << 0              /* "w" flag */
+const CMD_READONLY = 1 << 1           /* "r" flag */
+const CMD_DENYOOM = 1 << 2            /* "m" flag */
+const CMD_MODULE = 1 << 3             /* Command exported by module. */
+const CMD_ADMIN = 1 << 4              /* "a" flag */
+const CMD_PUBSUB = 1 << 5             /* "p" flag */
+const CMD_NOSCRIPT = 1 << 6           /* "s" flag */
+const CMD_RANDOM = 1 << 7             /* "R" flag */
+const CMD_SORT_FOR_SCRIPT = 1 << 8    /* "S" flag */
+const CMD_LOADING = 1 << 9            /* "l" flag */
+const CMD_STALE = 1 << 10             /* "t" flag */
+const CMD_SKIP_MONITOR = 1 << 11      /* "M" flag */
+const CMD_ASKING = 1 << 12            /* "k" flag */
+const CMD_FAST = 1 << 13              /* "F" flag */
+const CMD_MODULE_GETKEYS = 1 << 14    /* Use the modules getkeys interface. */
+const CMD_MODULE_NO_CLUSTER = 1 << 15 /* Deny on Redis Cluster. */
+
+
+/* Command call flags, see call() function */
+const CMD_CALL_NONE = 0
+const CMD_CALL_SLOWLOG = 1<<0
+const CMD_CALL_STATS = 1<<1
+const CMD_CALL_PROPAGATE_AOF = 1<<2
+const CMD_CALL_PROPAGATE_REPL = 1<<3
+const CMD_CALL_PROPAGATE = CMD_CALL_PROPAGATE_AOF|CMD_CALL_PROPAGATE_REPL
+const CMD_CALL_FULL = CMD_CALL_SLOWLOG | CMD_CALL_STATS | CMD_CALL_PROPAGATE
+
+/* Command propagation flags, see propagate() function */
+const PROPAGATE_NONE = 0
+const PROPAGATE_AOF = 1
+const PROPAGATE_REPL = 2

@@ -1,15 +1,13 @@
 package main
 
-import (
-	"fmt"
-	"bytes"
-)
+import "fmt"
 
 type data struct {
 	//count int64
 	//sync.Mutex
-	Buf    []byte
-	BufPos int64
+	//Buf    []byte
+	//BufPos int64
+	A int64
 }
 
 func main() {
@@ -56,11 +54,24 @@ func main() {
 	//fmt.Println(time.Since(t))
 	//time.Sleep(2*time.Second)Ò
 
-	s := []byte("*hello\r\n")
-	newline := bytes.IndexByte(s, '\r')
-	pos := newline + 2
-	fmt.Println(string(s[pos:]))
+	//s := []byte("*hello\r\n")
+	//newline := bytes.IndexByte(s, '\r')
+	//pos := newline + 2
+	//fmt.Println(string(s[pos:]))
+	var datas []*data
+	for i:=0; i<100; i++ {
+		datas = append(datas, dataCreate(int64(i)))
+	}
 
+	for _, d := range datas {
+		fmt.Println(d.A)
+	}
+}
+
+func dataCreate(a int64) *data {
+	return &data {
+		a,
+	}
 }
 
 //func (d *data) getCount(ch chan int64, i int) {

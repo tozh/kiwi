@@ -45,6 +45,7 @@ type Client struct {
 	ReadReplyOff             int64
 	BType                    int64
 	Authenticated            int64
+	WOff                     int64 // Last write global replication offset.
 }
 
 func (c *Client) WithFlags(flags int64) bool {
@@ -287,11 +288,15 @@ func (c *Client) Reset() {
 }
 
 /* Flag the transacation as DIRTY_EXEC so that EXEC will fail.
- * Should be called every time there is an error while queueing a command. */
+* Should be called every time there is an error while queueing a command. */
 func (c *Client) FlagTransaction() {
 	if c.WithFlags(CLIENT_MULTI) {
 		c.AddFlags(CLIENT_DIRTY_EXEC);
 	}
+}
+
+func (c *Client) DiscardTransation() {
+
 }
 
 // functions for client

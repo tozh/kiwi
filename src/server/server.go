@@ -31,30 +31,6 @@ import (
 //	DefragLater *List
 //}
 
-type CommandProcess func(s *Server, c *Client)
-
-type Command struct {
-	Name  string
-	Arity int64
-	Flags int64
-	/* What keys should be loaded in background when calling this command? */
-	FirstKey int64
-	LastKey  int64
-	KeyStep  int64
-	Msec     int64
-	Calls    int64
-	Process  CommandProcess
-	//Process  func(s *Server, c *Client)
-}
-
-type Op struct {
-	Argc   int64    // count of arguments
-	Argv   []string // arguments of current command
-	DbId   int64
-	Target int64
-	Cmd    *Command
-}
-
 type ClientBufferLimitsConfig struct {
 	HardLimitBytes int64
 	SoftLimitBytes int64
@@ -147,14 +123,16 @@ type Server struct {
 	//ZSetMaxZiplistEntries int64
 	//ZSetMaxZiplistvalue int64
 
-	Shared SharedObjects
-
+	Shared             SharedObjects
 	StatRejectedConn   int64
 	StatConnCount      int64
 	StatNetOutputBytes int64
-
-	ConfigFlushAll bool
-	mutex          sync.Mutex
+	StatNumCommands    int64
+	ConfigFlushAll     bool
+	mutex              sync.Mutex
+	MaxMemory          int64
+	Loading            bool
+	AlsoPropagate      *OpArray
 }
 
 func (s *Server) CreateClient(conn net.Conn) *Client {
@@ -725,6 +703,135 @@ func (s *Server) ProcessInputBuffer(c *Client) {
 	s.CurrentClient = nil
 }
 
+/* Call() is the core of Redis execution of a command.
+ *
+ * The following flags can be passed:
+ * CMD_CALL_NONE        No flags.
+ * CMD_CALL_SLOWLOG     Check command speed and log in the slow log if needed.
+ * CMD_CALL_STATS       Populate command stats.
+ * CMD_CALL_PROPAGATE_AOF   Append command to AOF if it modified the dataset
+ *                          or if the client flags are forcing propagation.
+ * CMD_CALL_PROPAGATE_REPL  Send command to salves if it modified the dataset
+ *                          or if the client flags are forcing propagation.
+ * CMD_CALL_PROPAGATE   Alias for PROPAGATE_AOF|PROPAGATE_REPL.
+ * CMD_CALL_FULL        Alias for SLOWLOG|STATS|PROPAGATE.
+ *
+ * The exact propagation behavior depends on the client flags.
+ * Specifically:
+ *
+ * 1. If the client flags CLIENT_FORCE_AOF or CLIENT_FORCE_REPL are set
+ *    and assuming the corresponding CMD_CALL_PROPAGATE_AOF/REPL is set
+ *    in the call flags, then the command is propagated even if the
+ *    dataset was not affected by the command.
+ * 2. If the client flags CLIENT_PREVENT_REPL_PROP or CLIENT_PREVENT_AOF_PROP
+ *    are set, the propagation into AOF or to slaves is not performed even
+ *    if the command modified the dataset.
+ *
+ * Note that regardless of the client flags, if CMD_CALL_PROPAGATE_AOF
+ * or CMD_CALL_PROPAGATE_REPL are not set, then respectively AOF or
+ * slaves propagation will never occur.
+ *
+ * Client flags are modified by the implementation of a given command
+ * using the following API:
+ *
+ * forceCommandPropagation(client *c, int flags);
+ * preventCommandPropagation(client *c);
+ * preventCommandAOF(client *c);
+ * preventCommandReplication(client *c);
+ *
+ */
+func (s *Server) Call(c *Client, flags int64) {
+	clientOldFlags := c.Flags
+	///* Sent the command to clients in MONITOR mode, only if the commands are
+	//* not generated from reading an AOF. */
+	//if (listLength(server.monitors) &&
+	//	!server.loading &&
+	//	!(c->cmd->flags & (CMD_SKIP_MONITOR|CMD_ADMIN)))
+	//{
+	//	replicationFeedMonitors(c,server.monitors,c->db->id,c->argv,c->argc);
+	//}
+	c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
+	PrevAlsoPropagate := s.AlsoPropagate
+	s.AlsoPropagate.Init()
+
+	dirty := s.Dirty
+	start := time.Now()
+	c.Cmd.Process(s, c)
+	duration := time.Since(start)
+	dirty = s.Dirty - dirty
+	if dirty < 0 {
+		dirty = 0
+	}
+	if s.Loading && c.WithFlags(CLIENT_LUA) {
+		flags &= ^(CMD_CALL_SLOWLOG | CMD_CALL_STATS)
+	}
+
+	///* Log the command into the Slow log if needed, and populate the
+	//* per-command statistics that we show in INFO commandstats. */
+	//if (flags & CMD_CALL_SLOWLOG && c->cmd->proc != execCommand) {
+	//	char *latency_event = (c->cmd->flags & CMD_FAST) ?
+	//	"fast-command" : "command";
+	//	latencyAddSampleIfNeeded(latency_event,duration/1000);
+	//	slowlogPushEntryIfNeeded(c,c->argv,c->argc,duration);
+	//}
+	//if flags&CMD_CALL_SLOWLOG != 0 && !c.Cmd.IsProcess(&ExecCommand) {
+	//	latency_event := "command"
+	//	if c.Cmd.WithFlags(CMD_FAST) {
+	//		latency_event = "fast-command"
+	//	}
+	//
+	//}
+
+	if flags&CMD_CALL_PROPAGATE != 0 {
+		c.LastCmd.Duration = duration
+		c.LastCmd.Calls++
+		if c.Flags&CLIENT_PREVENT_AOF_PROP != CLIENT_PREVENT_PROP {
+			propagateFlags := PROPAGATE_NONE
+			if dirty != 0 {
+				propagateFlags |= PROPAGATE_AOF | PROPAGATE_REPL
+			}
+			if c.WithFlags(CLIENT_FORCE_REPL) {
+				propagateFlags |= PROPAGATE_REPL
+			}
+			if c.WithFlags(CLIENT_FORCE_AOF) {
+				propagateFlags |= PROPAGATE_AOF
+			}
+			if c.WithFlags(CLIENT_PREVENT_REPL_PROP) {
+				propagateFlags &= ^PROPAGATE_REPL
+			}
+			if c.WithFlags(CLIENT_PREVENT_AOF_PROP) {
+				propagateFlags &= ^PROPAGATE_AOF
+			}
+			if propagateFlags != PROPAGATE_NONE && !c.Cmd.WithFlags(CMD_MODULE) {
+				s.Propagate(c.Cmd, c.Db.Id, c.Argc, c.Argv, int64(propagateFlags))
+			}
+		}
+	}
+	c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
+	c.AddFlags(clientOldFlags | CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
+
+	if s.AlsoPropagate.OpNum != 0 {
+		if flags&CMD_CALL_PROPAGATE != 0 {
+			for j := int64(0); j < s.AlsoPropagate.OpNum; j++ {
+				op := s.AlsoPropagate.Ops[j]
+				target := op.Target
+				if flags&CMD_CALL_PROPAGATE_AOF == 0 {
+					target &= ^PROPAGATE_AOF
+				}
+				if flags&CMD_CALL_PROPAGATE_REPL == 0 {
+					target &= ^PROPAGATE_REPL
+				}
+				if target != 0 {
+					s.Propagate(op.Cmd, op.DbId, op.Argc, op.Argv, target)
+				}
+			}
+		}
+		s.AlsoPropagate.Init()
+	}
+	s.AlsoPropagate = PrevAlsoPropagate
+	s.StatNumCommands++
+}
+
 /* If this function gets called we already read a whole
  * command, arguments are in the client argv/argc fields.
  * processCommand() execute the command or prepare the
@@ -755,24 +862,169 @@ func (s *Server) ProcessCommand(c *Client) int64 {
 		s.AddReplyError(c, fmt.Sprintf("wrong number of arguments for '%s' command", c.Argv[0]))
 		return C_OK
 	}
-	if (s.RequirePassword!=nil && c.Authenticated == 0) {
-		c.Cmd.Process = AuthCommand
-		if c.Cmd.Process AuthCommand {
-
+	if s.RequirePassword != nil && c.Authenticated == 0 && &c.Cmd.Process != &AuthCommand {
+		c.FlagTransaction()
+		s.AddReplyError(c, s.Shared.NoAuthErr)
+		return C_OK
+	}
+	//if (server.cluster_enabled &&
+	//	!(c->flags & CLIENT_MASTER) &&
+	//	!(c->flags & CLIENT_LUA &&
+	//		server.lua_caller->flags & CLIENT_MASTER) &&
+	//	!(c->cmd->getkeys_proc == NULL && c->cmd->firstkey == 0 &&
+	//		c->cmd->proc != execCommand))
+	//{
+	//	int hashslot;
+	//	int error_code;
+	//	clusterNode *n = getNodeByQuery(c,c->cmd,c->argv,c->argc,
+	//		&hashslot,&error_code);
+	//	if (n == NULL || n != server.cluster->myself) {
+	//		if (c->cmd->proc == execCommand) {
+	//			discardTransaction(c);
+	//		} else {
+	//			flagTransaction(c);
+	//		}
+	//		clusterRedirectClient(c,n,hashslot,error_code);
+	//		return C_OK;
+	//	}
+	//}
+	/* Handle the maxmemory directive.
+	 *
+	 * First we try to free some memory if possible (if there are volatile
+	 * keys in the dataset). If there are not the only thing we can do
+	 * is returning an error. */
+	if s.MaxMemory != 0 {
+		result := s.FreeMemoryIfNeeded()
+		if s.CurrentClient == nil {
+			return C_ERR
+		}
+		if c.Cmd.WithFlags(CMD_DENYOOM) && result == C_ERR {
+			c.FlagTransaction()
+			s.AddReplyError(c, s.Shared.OOMErr)
+			return C_OK
 		}
 	}
 
+	///* Don't accept write commands if there are problems persisting on disk
+	//* and if this is a master instance. */
+	//if (((server.stop_writes_on_bgsave_err &&
+	//	server.saveparamslen > 0 &&
+	//	server.lastbgsave_status == C_ERR) ||
+	//	server.aof_last_write_status == C_ERR) &&
+	//	server.masterhost == NULL &&
+	//	(c->cmd->flags & CMD_WRITE ||
+	//		c->cmd->proc == pingCommand))
+	//{
+	//	flagTransaction(c);
+	//	if (server.aof_last_write_status == C_OK)
+	//	addReply(c, shared.bgsaveerr);
+	//	else
+	//	addReplySds(c,
+	//		sdscatprintf(sdsempty(),
+	//			"-MISCONF Errors writing to the AOF file: %s\r\n",
+	//			strerror(server.aof_last_write_errno)));
+	//	return C_OK;
+	//}
+	///* Don't accept write commands if there are not enough good slaves and
+	//* user configured the min-slaves-to-write option. */
+	//if (server.masterhost == NULL &&
+	//	server.repl_min_slaves_to_write &&
+	//	server.repl_min_slaves_max_lag &&
+	//	c->cmd->flags & CMD_WRITE &&
+	//	server.repl_good_slaves_count < server.repl_min_slaves_to_write)
+	//{
+	//	flagTransaction(c);
+	//	addReply(c, shared.noreplicaserr);
+	//	return C_OK;
+	//}
 
+	///* Don't accept write commands if this is a read only slave. But
+	//* accept write commands if this is our master. */
+	//if (server.masterhost && server.repl_slave_ro &&
+	//	!(c->flags & CLIENT_MASTER) &&
+	//	c->cmd->flags & CMD_WRITE)
+	//{
+	//	addReply(c, shared.roslaveerr);
+	//	return C_OK;
+	//}
 
+	///* Only allow SUBSCRIBE and UNSUBSCRIBE in the context of Pub/Sub */
+	//if (c->flags & CLIENT_PUBSUB &&
+	//	c->cmd->proc != pingCommand &&
+	//	c->cmd->proc != subscribeCommand &&
+	//	c->cmd->proc != unsubscribeCommand &&
+	//	c->cmd->proc != psubscribeCommand &&
+	//	c->cmd->proc != punsubscribeCommand) {
+	//	addReplyError(c,"only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT allowed in this context");
+	//	return C_OK;
+	//}
 
+	///* Only allow commands with flag "t", such as INFO, SLAVEOF and so on,
+	//* when slave-serve-stale-data is no and we are a slave with a broken
+	//* link with master. */
+	//if (server.masterhost && server.repl_state != REPL_STATE_CONNECTED &&
+	//	server.repl_serve_stale_data == 0 &&
+	//	!(c->cmd->flags & CMD_STALE))
+	//{
+	//	flagTransaction(c);
+	//	addReply(c, shared.masterdownerr);
+	//	return C_OK;
+	//}
 
+	/* Loading DB? Return an error if the command has not the
+	 * CMD_LOADING flag. */
+	if s.Loading && c.Cmd.WithFlags(CMD_LOADING) {
+		s.AddReply(c, s.Shared.LoadingErr)
+		return C_OK
+	}
 
+	///* Lua script too slow? Only allow a limited number of commands. */
+	//if (server.lua_timedout &&
+	//	c->cmd->proc != authCommand &&
+	//	c->cmd->proc != replconfCommand &&
+	//	!(c->cmd->proc == shutdownCommand &&
+	//		c->argc == 2 &&
+	//		tolower(((char*)c->argv[1]->ptr)[0]) == 'n') &&
+	//!(c->cmd->proc == scriptCommand &&
+	//	c->argc == 2 &&
+	//	tolower(((char*)c->argv[1]->ptr)[0]) == 'k'))
+	//{
+	//flagTransaction(c);
+	//addReply(c, shared.slowscripterr);
+	//return C_OK;
+	//}
+	///* Exec the command */
+	//if (c->flags & CLIENT_MULTI &&
+	//	c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
+	//	c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
+	//{
+	//	queueMultiCommand(c);
+	//	addReply(c,shared.queued);
+	//} else {
+	//call(c,CMD_CALL_FULL);
+	//c->woff = server.master_repl_offset;
+	//if (listLength(server.ready_keys))
+	//handleClientsBlockedOnKeys();
+	//}
 
+	// Exec the command
+	// multi TODO
+	// blocked commands BLPOP TODO
 
+	s.Call(c, CMD_CALL_FULL)
 	return C_OK
 }
 
-func (s *Server) LookUpCommand(name string) *Command{
+func (s *Server) FreeMemoryIfNeeded() int64 {
+	// TODO:
+	return C_OK
+}
+
+func (s *Server) Propagate(cmd *Command, dbid int64, argc int64, argv []string, flags int64) {
+	//TODO:
+}
+
+func (s *Server) LookUpCommand(name string) *Command {
 	return s.Commands[name]
 }
 
