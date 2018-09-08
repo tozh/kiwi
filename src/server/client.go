@@ -24,7 +24,7 @@ type Client struct {
 	LastCmd                  *Command
 	Reply                    *List
 	ReplySize                int64
-	SentSize                 int64 // Amount of bytes already sent in the current buffer or object being sent.
+	//SentSize                 int64 // Amount of bytes already sent in the current buffer or object being sent.
 	CreateTime               time.Duration
 	LastInteraction          time.Duration
 	Buf                      []byte
@@ -105,8 +105,6 @@ func (c *Client) Read(b []byte) (int64, error) {
 	n, err := c.Conn.Read(b)
 	return int64(n), err
 }
-
-
 
 
 func (c *Client) GetClientType() int64 {
