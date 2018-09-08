@@ -153,7 +153,7 @@ func (s *Server) CreateClient(conn net.Conn) *Client {
 
 	}
 	c.GetNextClientId(s)
-	c.SelectDB(s, 0)
+	SelectDB(s, &c,0)
 	s.LinkClient(&c)
 	return &c
 }
@@ -1111,4 +1111,31 @@ func AsyncCloseClientOnOutputBufferLimitReached(s *Server, c *Client) {
 		//TODO
 		CloseClient(s, c)
 	}
+}
+
+func ServerCron(s *Server) {
+
+}
+
+func ClientCron(s *Server, c *Client) {
+
+}
+
+func DbDeleteSync(s *Server, c *Client, key string) bool {
+	// TODO expire things
+	c.Db.Delete(key)
+	return true
+}
+
+func DbDeleteAsync(s *Server, c *Client, key string) bool {
+	// TODO
+	return true
+}
+
+func SelectDB(s *Server, c *Client, dbId int64) int64 {
+	if dbId < 0 || dbId >= s.DbNum {
+		return C_ERR
+	}
+	c.Db = s.Dbs[dbId]
+	return C_OK
 }

@@ -80,9 +80,9 @@ NOTE: You only need to do one of the above things in order for the server to sta
 	c.AddFlags(flags)
 
 	chs := Chans{
-		make(chan *Dual, 1),
-		make(chan *Dual, 1),
-		make(chan *Dual, 1),
+		make(chan *Dual),
+		make(chan *Dual),
+		make(chan *Dual),
 		make(chan string),
 	}
 	dual := &Dual{s, c}

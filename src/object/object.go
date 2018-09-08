@@ -39,7 +39,7 @@ type SetObject struct {
 	Value *map[string]string
 }
 
-type IObject interface {
+type Objector interface {
 	getRType() int64
 	getRTypeInString() string
 	setRType(rtype int64)
@@ -175,6 +175,6 @@ func SimpleGetLRUClock() int64 {
 	return mstime / LRU_CLOCK_RESOLUTION & LRU_CLOCK_MAX
 }
 
-func CheckRType(o IObject, rtype int64) bool {
+func CheckRType(o Objector, rtype int64) bool {
 	return o != nil && o.(*Object).RType == rtype
 }

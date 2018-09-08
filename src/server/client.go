@@ -60,13 +60,7 @@ func (c *Client) DeleteFlags(flags int64) {
 	c.Flags &= ^flags
 }
 
-func (c *Client) SelectDB(s *Server, dbId int64) int64 {
-	if dbId < 0 || dbId >= s.DbNum {
-		return C_ERR
-	}
-	c.Db = s.Dbs[dbId]
-	return C_OK
-}
+
 
 func (c *Client) GeneratePeerId(s *Server) {
 	if c.WithFlags(CLIENT_UNIX_SOCKET) {

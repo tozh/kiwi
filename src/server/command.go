@@ -9,18 +9,45 @@ import (
 )
 
 type CommandProcess func(s *Server, c *Client)
+type CommandGetKeysProcess func(cmd *Command, argv []string, argc int64, numkeys []int64)
 
 type Command struct {
 	Name  string
-	Arity int64
+	Process  CommandProcess
+	Arity int64  // -N means >= N, N means = N
+	CharFlags string
 	Flags int64
+	GetKeyProcess CommandGetKeysProcess
 	/* What keys should be loaded in background when calling this command? */
-	FirstKey int64
-	LastKey  int64
+	FirstKey bool
+	LastKey  bool
 	KeyStep  int64
 	Duration time.Duration
 	Calls    int64
-	Process  CommandProcess
+}
+var CommandTable  = []Command {
+	{"get", GetCommand, 2, "rF", 0, nil, true, true, 1, 0 , 0},
+	{"set", SetCommand, -3, "wm", 0, nil, true, true, 1, 0 , 0},
+	{"setnx", SetNxCommand, 3, "wmF", 0, nil, true, true, 1, 0 , 0},
+	{"setex", SetExCommand, 4, "wm", 0, nil, true, true, 1, 0 , 0},
+	{"append", AppendCommand, 3, "wm", 0, nil, true, true, 1, 0 , 0},
+	{"strlen", StrLenCommand, 2, "rF", 0, nil, true, true, 1, 0 , 0},
+	{"del", DeleteCommand, -2, "w", 0, nil, true, false, 1, 0 , 0},
+	//{"unlink", UnlinkCommand, -2, "wF", 0, nil, true, false, 1, 0 , 0},
+	{"exists", ExistsCommand, -2, "rF", 0, nil, true, false, 1, 0 , 0},
+	{"incr", IncrCommand, 2, "wmF", 0, nil, true, true, 1, 0 , 0},
+	{"decr", DecrCommand, 2, "wmF", 0, nil, true, true, 1, 0 , 0},
+	{"mget", MGetCommand, -2, "rF", 0, nil, true, false, 1, 0 , 0},
+	{"mset", MSetCommand, -3, "wm", 0, nil, true, true, 2, 0 , 0},
+	{"msetnx", GetCommand, 2, "wm", 0, nil, true, true, 2, 0 , 0},
+	{"randomkey", RandomKeyCommand, 1, "rR", 0, nil, false, false, 0, 0 , 0},
+	{"select", SelectCommand, 2, "lF", 0, nil, false, false, 0, 0 , 0},
+	{"flushall", FlushAllCommand, -1, "w", 0, nil, false, false, 0, 0 , 0},
+}
+
+func CreateCommandTable(s *Server) {
+	// TODO populateCommandTable
+	//s.Commands =
 }
 
 func (cmd *Command) WithFlags(flags int64) bool {
@@ -98,11 +125,17 @@ var FlushAllCommand CommandProcess = func(s *Server, c *Client) {
 	s.Dirty++
 }
 
-//func (s *Server) ExistCommand(c *Client) {
-//	c.Db.Exist(c.Argv[1])
-//	// expire
-//	// addReply()
-//}
+var ExistsCommand CommandProcess = func(s *Server, c *Client) {
+	count := int64(0)
+	for j:=int64(1); j<c.Argc; j++ {
+		if c.Db.Exist(c.Argv[1]) {
+			count++
+		}
+	}
+	s.AddReplyInt(c, count)
+	// expire
+	// addReply()
+}
 
 func IncrDecrCommand(s *Server, c *Client, incr int64) {
 	o := c.Db.Get(c.Argv[1]).(*StrObject)
@@ -178,7 +211,7 @@ var AppendCommand CommandProcess = func(s *Server, c *Client) {
 	s.AddReplyInt(c, length)
 }
 
-func DbGetOrReply(s *Server, c *Client, key string, reply string) IObject {
+func DbGetOrReply(s *Server, c *Client, key string, reply string) Objector {
 	o := c.Db.Get(key)
 	if o == nil {
 		s.AddReply(c, reply)
@@ -195,7 +228,7 @@ func GetGenericCommand(s *Server, c *Client) int64 {
 		s.AddReply(c, s.Shared.WrongTypeErr)
 		return C_ERR
 	} else {
-		s.AddReplyStrObj(c, o.(*StrObject))
+		s.AddReplyBulk(c, o.(*StrObject))
 		return C_OK
 	}
 }
@@ -280,9 +313,9 @@ var AuthCommand CommandProcess = func(s *Server, c *Client) {
 	}
 }
 
-var ClientCommand CommandProcess = func (s *Server, c *Client) {
-
-}
+//var ClientCommand CommandProcess = func (s *Server, c *Client) {
+//
+//}
 
 
 //var ExecCommand CommandProcess = func(s *Server, c *Client) {
@@ -305,3 +338,51 @@ var ClientCommand CommandProcess = func (s *Server, c *Client) {
 //		return
 //	}
 //}
+
+var DeleteCommand CommandProcess = func(s *Server, c *Client) {
+	DeleteGenericCommand(s, c, false)
+}
+
+//var UnlinkCommand CommandProcess = func(s *Server, c *Client) {
+//	DeleteGenericCommand(s, c, true)
+//}
+
+func DeleteGenericCommand(s *Server, c *Client, lazy bool) {
+	count := int64(0)
+	for j:=int64(1); j<c.Argc; j++ {
+		var deleted bool
+		if lazy {
+			deleted = DbDeleteAsync(s, c, c.Argv[j])
+		} else {
+			deleted = DbDeleteSync(s, c, c.Argv[j])
+		}
+		if deleted {
+			count++
+			s.Dirty++
+		}
+	}
+	s.AddReplyInt(c, count)
+}
+
+var SelectCommand CommandProcess = func(s *Server, c *Client) {
+	i, err := strconv.ParseInt(c.Argv[1], 10, 64)
+	if err != nil {
+		s.AddReplyError(c, "invalid DB index")
+	} else {
+		if SelectDB(s, c, i) == C_ERR {
+			s.AddReplyError(c, "DB index is out of range")
+		} else {
+			s.AddReply(c, s.Shared.Ok)
+		}
+	}
+}
+
+var RandomKeyCommand CommandProcess = func(s *Server, c*Client) {
+	key, value := c.Db.RandGet()
+	if key == "" && value==nil {
+		s.AddReply(c, s.Shared.NullBulk)
+	} else {
+		s.AddReplyBulkString(c, key)
+	}
+}
+

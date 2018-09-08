@@ -8,8 +8,8 @@ import (
 )
 
 type Db struct {
-	Dict map[string]IObject
-	//Expires map[IObject]int64
+	Dict map[string]Objector
+	//Expires map[Objector]int64
 	Id int64
 	//AvgTTL int64
 	//WatchedKeys map[string] int64
@@ -25,26 +25,26 @@ func getStrByStrObject(key *StrObject) string {
 	}
 }
 
-func (db *Db) Get(key string) IObject {
+func (db *Db) Get(key string) Objector {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
 	return db.Dict[key]
 }
 
-//func (db *Db) GetForWrite(key IObject) IObject {
+//func (db *Db) GetForWrite(key Objector) Objector {
 //	return db.Dict[key]
 //}
 
-func (db *Db) RandGet() IObject {
+func (db *Db) RandGet() (string, Objector) {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
-	for _, value := range db.Dict {
-		return value
+	for key, value := range db.Dict {
+		return key, value
 	}
-	return nil
+	return "", nil
 }
 
-func (db *Db) Set(key string, ptr IObject) {
+func (db *Db) Set(key string, ptr Objector) {
 	db.mutex.Lock()
 	db.Dict[key] = ptr
 	db.mutex.Unlock()
@@ -56,7 +56,7 @@ func (db *Db) Delete(key string) {
 	db.mutex.Unlock()
 }
 
-func (db *Db) SetNx(key string, ptr IObject) bool {
+func (db *Db) SetNx(key string, ptr Objector) bool {
 	if value := db.Get(key); value != nil {
 		return false
 	} else {
@@ -65,7 +65,7 @@ func (db *Db) SetNx(key string, ptr IObject) bool {
 	}
 }
 
-func (db *Db) SetEx(key string, ptr IObject) bool {
+func (db *Db) SetEx(key string, ptr Objector) bool {
 	if value := db.Get(key); value != nil {
 		db.Set(key, ptr)
 		return true
@@ -87,6 +87,6 @@ func (db *Db) Size() int64 {
 
 func (db *Db) FlushAll() {
 	db.mutex.Lock()
-	db.Dict = make(map[string]IObject)
+	db.Dict = make(map[string]Objector)
 	db.mutex.Unlock()
 }
