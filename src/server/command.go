@@ -45,9 +45,44 @@ var CommandTable  = []Command {
 	{"flushall", FlushAllCommand, -1, "w", 0, nil, false, false, 0, 0 , 0},
 }
 
-func CreateCommandTable(s *Server) {
-	// TODO populateCommandTable
-	//s.Commands =
+func PopulateCommandTable(s *Server) {
+	for _, cmd := range CommandTable {
+		for i:=0;i<len(cmd.CharFlags);i++ {
+			switch cmd.CharFlags[i] {
+			case 'w':
+				cmd.Flags |= CMD_WRITE
+			case 'r':
+				cmd.Flags |= CMD_READONLY
+			case 'm':
+				cmd.Flags |= CMD_DENYOOM
+			case 'a':
+				cmd.Flags |= CMD_ADMIN
+			case 'p':
+				cmd.Flags |= CMD_PUBSUB
+			case 's':
+				cmd.Flags |= CMD_NOSCRIPT
+			case 'R':
+				cmd.Flags |= CMD_RANDOM
+			case 'S':
+				cmd.Flags |= CMD_SORT_FOR_SCRIPT
+			case 'l':
+				cmd.Flags |= CMD_LOADING
+			case 't':
+				cmd.Flags |= CMD_STALE
+			case 'M':
+				cmd.Flags |= CMD_SKIP_MONITOR
+			case 'k':
+				cmd.Flags |= CMD_ASKING
+			case 'F':
+				cmd.Flags |= CMD_FAST
+			default:
+				panic("Unsupported command flag")
+			}
+		}
+		s.Commands[cmd.Name] = &cmd
+		s.OrigCommands[cmd.Name] = &cmd
+	}
+
 }
 
 func (cmd *Command) WithFlags(flags int64) bool {
