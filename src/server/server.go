@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strconv"
 	"bytes"
-	"strings"
 	"net"
 	"time"
 	"os"
@@ -19,11 +18,11 @@ import (
 	"path/filepath"
 )
 
-type ClientBufferLimitsConfig struct {
-	HardLimitBytes        int64
-	SoftLimitBytes        int64
-	SoftLimitTimeDuration time.Duration
-}
+//type ClientBufferLimitsConfig struct {
+//	HardLimitBytes        int64
+//	SoftLimitBytes        int64
+//	SoftLimitTimeDuration time.Duration
+//}
 
 type Server struct {
 	Pid                  int64
@@ -211,174 +210,7 @@ func PrepareClientToWrite(c *Client) int64 {
 	return C_OK
 }
 
-func (s *Server) AddReplyToBuffer(c *Client, str string) int64 {
-	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
-		return C_OK
-	}
-	if c.Reply.ListLength() > 0 {
-		return C_ERR
-	}
-	available := cap(c.Buf)
-	if len(str) > available {
-		return C_ERR
-	}
-	copy(c.Buf[c.BufPos:], str)
-	c.BufPos += int64(len(str))
-	return C_OK
-}
 
-func (s *Server) AddReplyToList(c *Client, str string) {
-	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
-		return
-	}
-	if c.Reply.ListLength() == 0 {
-		c.Reply.ListAddNodeTail(&str)
-		c.ReplySize += int64(len(str))
-	} else {
-		ln := c.Reply.ListTail()
-		tail := *ln.Value.(*string)
-		if tail != "" && (len(tail) >= len(str) || len(tail)+len(str) < PROTO_REPLY_CHUNK_BYTES) {
-			tail = CatString(tail, str)
-			ln.Value = &tail
-			c.ReplySize += int64(len(str))
-		} else {
-			c.Reply.ListAddNodeTail(&str)
-			c.ReplySize += int64(len(str))
-		}
-
-	}
-	//AsyncCloseClientOnOutputBufferLimitReached(s, c)
-}
-
-func (s *Server) AddReply(c *Client, str string) {
-	if PrepareClientToWrite(c) != C_OK {
-		return
-	}
-	if s.AddReplyToBuffer(c, str) != C_OK {
-		s.AddReplyToList(c, str)
-	}
-}
-
-func (s *Server) AddReplyStrObj(c *Client, o *StrObject) {
-	if !CheckRType(o, OBJ_RTYPE_STR) {
-		return
-	}
-	str, err := GetStrObjectValueString(o)
-	if err == nil {
-		s.AddReply(c, str)
-	} else {
-		return
-	}
-}
-
-func (s *Server) AddReplyError(c *Client, str string) {
-	if len(str) != 0 || str[0] != '-' {
-		s.AddReply(c, "-ERR ")
-	}
-	s.AddReply(c, str)
-	s.AddReply(c, "\r\n")
-}
-
-func (s *Server) AddReplyErrorFormat(c *Client, format string, a ...interface{}) {
-	str := fmt.Sprintf(format, a)
-	s.AddReplyError(c, str)
-}
-
-func (s *Server) AddReplyStatus(c *Client, str string) {
-	s.AddReply(c, "+")
-	s.AddReply(c, str)
-	s.AddReply(c, "\r\n")
-}
-
-func (s *Server) AddReplyStatusFormat(c *Client, format string, a ...interface{}) {
-	str := fmt.Sprintf(format, a)
-	s.AddReplyStatus(c, str)
-}
-
-//func (s *Server) AddReplyHelp(c *Client, help []string) {
-//	cmd := c.Argv[0]
-//	s.AddReplyStatusFormat(c, "%s <subcommand> arg arg ... arg. Subcommands are:", cmd)
-//	for _, h := range help {
-//		s.AddReplyStatus(c, h)
-//	}
-//}
-
-func (s *Server) AddReplyIntWithPrifix(c *Client, i int64, prefix byte) {
-	/* Things like $3\r\n or *2\r\n are emitted very often by the protocol
-	so we have a few shared objects to use if the integer is small
-	like it is most of the times. */
-	if prefix == '*' && i >= 0 && i < SHARED_BULKHDR_LEN {
-		s.AddReply(c, s.Shared.MultiBulkHDR[i])
-	} else if prefix == '$' && i >= 0 && i < SHARED_BULKHDR_LEN {
-		s.AddReply(c, s.Shared.MultiBulkHDR[i])
-	} else {
-		str := strconv.FormatInt(i, 10)
-		buf := bytes.Buffer{}
-		buf.WriteByte(prefix)
-		buf.WriteString(str)
-		buf.WriteByte('\r')
-		buf.WriteByte('\n')
-		s.AddReply(c, buf.String())
-	}
-}
-
-func (s *Server) AddReplyInt(c *Client, i int64) {
-	if i == 0 {
-		s.AddReply(c, s.Shared.Zero)
-	} else if i == 1 {
-		s.AddReply(c, s.Shared.One)
-	} else {
-		s.AddReplyIntWithPrifix(c, i, ':')
-	}
-}
-
-func (s *Server) AddReplyMultiBulkLength(c *Client, length int64) {
-	s.AddReplyIntWithPrifix(c, length, '*')
-}
-
-/* Create the length prefix of a bulk reply, example: $2234 */
-func (s *Server) AddReplyBulkLengthString(c *Client, str string) {
-	length := int64(len(str))
-	s.AddReplyIntWithPrifix(c, length, '$')
-}
-
-func (s *Server) AddReplyBulkLengthStrObj(c *Client, o *StrObject) {
-	if !CheckRType(o, OBJ_RTYPE_STR) {
-		return
-	}
-	str, err := GetStrObjectValueString(o)
-	if err == nil {
-		s.AddReplyBulkLengthString(c, str)
-	} else {
-		return
-	}
-}
-
-func (s *Server) AddReplyBulk(c *Client, o *StrObject) {
-	s.AddReplyBulkLengthStrObj(c, o)
-	s.AddReplyStrObj(c, o)
-	s.AddReply(c, s.Shared.Crlf)
-}
-
-func (s *Server) AddReplyBulkString(c *Client, str string) {
-	if str == "" {
-		s.AddReply(c, s.Shared.NullBulk)
-	} else {
-		s.AddReplyBulkLengthString(c, str)
-		s.AddReply(c, str)
-		s.AddReply(c, s.Shared.Crlf)
-	}
-}
-
-func (s *Server) AddReplyBulkInt(c *Client, i int64) {
-	str := strconv.FormatInt(i, 10)
-	s.AddReplyBulkString(c, str)
-}
-
-func (s *Server) AddReplySubcommandSyntaxError(c *Client) {
-	cmd := c.Argv[0]
-	s.AddReplyErrorFormat(c, "Unknown subcommand or wrong number of arguments for '%s'. Try %s HELP.", cmd, strings.ToUpper(cmd))
-}
 
 // Write data in output buffers to client.
 func WriteToClient(s *Server, c *Client) {
@@ -1080,30 +912,38 @@ func ClientCron(s *Server, c *Client) {
 
 }
 
-func ServerExists() error {
-	if redigoPidFile, err1 := os.Open(os.TempDir() + "//redigo.pid"); err1 == nil {
+func ServerExists() (int, error) {
+	fmt.Printf("-->%v\n", "ServerExists")
+
+	if redigoPidFile, err1 := os.Open(os.TempDir() + "redigo.pid"); err1 == nil {
 		defer redigoPidFile.Close()
 		if pidStr, err2 := ioutil.ReadAll(redigoPidFile); err2 == nil {
 			if pid, err3 := strconv.Atoi(string(pidStr)); err3 == nil {
 				if _, err4 := os.FindProcess(pid); err4 == nil {
-					return errors.New(fmt.Sprintf("Error! Redigo is runing, Pid is %d", pid))
+					return pid, errors.New(fmt.Sprintf("Error! Redigo server is now runing. Pid is %d", pid))
 				}
 			}
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 func CreateServer() *Server {
-	if err := ServerExists(); err == nil {
-		pid := os.Getpid()
-		redigoPidFile, _ := os.Open(os.TempDir() + "//redigo.pid")
-		redigoPidFile.WriteString(fmt.Sprintf("%d", pid))
-		redigoPidFile.Close()
+	fmt.Printf("-->%v\n", "CreateServer")
+
+	pidFile := os.TempDir() + "redigo.pid"
+	unixSocketPath := os.TempDir() + "redigo.sock"
+	if pid ,err1 := ServerExists(); err1 == nil {
+		pid = os.Getpid()
+		if redigoPidFile, err2 := os.Create(pidFile); err2 == nil {
+			redigoPidFile.WriteString(fmt.Sprintf("%d", pid))
+			redigoPidFile.Close()
+		}
+
 		configPath, _ := filepath.Abs(filepath.Dir(os.Args[0]))
 		s := Server{
 			int64(pid),
-			os.TempDir() + "/redigo.pid",
+			pidFile,
 			configPath,
 			os.Args[0],
 			os.Args,
@@ -1119,7 +959,7 @@ func CreateServer() *Server {
 			9988,
 			make([]string, CONFIG_BINDADDR_MAX),
 			0,
-			os.TempDir() + "/redigo.sock",
+			unixSocketPath,
 			nil,
 			nil,
 			make(map[int64]*Client),
@@ -1155,16 +995,18 @@ func CreateServer() *Server {
 		s.BindAddrs = append(s.BindAddrs, "0.0.0.0")
 		s.BindAddrCount++
 		return &s
+	} else {
+		fmt.Println(err1)
 	}
 	os.Exit(1)
 	return nil
 }
 
 func StartServer(s *Server) {
+	s.ServerLogDebugF("-->%v\n", "StartServer")
 	if s == nil {
 		return
 	}
-	s.ServerLogDebugF("%s\n", "StartServer")
 	for _, addr := range s.BindAddrs {
 		if addr != "" {
 			go TcpServer(s, addr)
@@ -1174,12 +1016,10 @@ func StartServer(s *Server) {
 }
 
 func CloseServer(s *Server) {
-	fmt.Println(s.LogLevel)
-	s.ServerLogDebugF("%s\n", "CloseServer")
-	s.CloseCh <- struct{}{}
-	fmt.Println("------>s.CloseCh")
+	s.ServerLogDebugF("-->%v\n", "CloseServer")
 	CloseClientsInAsyncList(s)
-	fmt.Println("ListLength---->", s.Clients.ListLength())
+
+	// clear clients
 	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	node := iter.Next
 	fmt.Println(node)
@@ -1187,15 +1027,16 @@ func CloseServer(s *Server) {
 		CloseClient(s, node.Value.(*Client))
 		node = node.ListNextNode()
 	}
-	fmt.Println("Wait...")
+
+	//notify server is closed
 	close(s.CloseCh)
+	os.Remove(s.PidFile)
 }
 
 func HandleSignal(s *Server) {
+	s.ServerLogDebugF("-->%v\n", "HandleSignal")
 	c := make(chan os.Signal, 1)
-	fmt.Println("HandleSignal")
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
-	fmt.Println("Signale Channel", <-c)
-	s.ServerLogDebugF("%s\n", "HandleSignal, Pass Block")
+	s.ServerLogDebugF("-->%v: <%s>\n", "Signal", <-c)
 	CloseServer(s)
 }
