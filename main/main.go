@@ -6,16 +6,14 @@ import (
 )
 
 func main() {
-	ch := make(chan int)
+	ch := make(chan int, 3)
 	go haha1(ch)
 	go haha2(ch)
 	go haha3(ch)
-	time.Sleep(time.Second)
-	ch<-1
-	time.Sleep(time.Second)
-	ch<-1
-	time.Sleep(time.Second)
-	time.Sleep(time.Second)
+	//ch<-1
+	//ch<-1
+	//ch<-1
+	close(ch)
 	time.Sleep(time.Second)
 }
 

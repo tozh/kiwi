@@ -113,7 +113,6 @@ func CloseLoop(s* Server, c* Client) {
 		case <-c.CloseCh:
 			if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
 				fmt.Println("CloseLoop ----> Stop Client Sync")
-
 				CloseClient(s, c)
 			} else {
 				fmt.Println("CloseLoop ----> Stop Client Async")

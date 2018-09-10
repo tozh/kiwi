@@ -104,9 +104,9 @@ func (s *Server) CreateClient(conn net.Conn) *Client {
 		MultiBulkLen:    0,
 		BulkLen:         0,
 		Authenticated:   0,
-		ReadCh:          make(chan struct{}),
-		WriteCh:         make(chan struct{}),
-		CloseCh:         make(chan struct{}),
+		ReadCh:          make(chan struct{}, 1),
+		WriteCh:         make(chan struct{}, 1),
+		CloseCh:         make(chan struct{}, 1),
 		//PendingWriteNode: nil,
 		//UnblockedNode:    nil,
 	}
@@ -149,7 +149,6 @@ func (s *Server) UnLinkClient(c *Client) {
 
 func CloseClient(s *Server, c *Client) {
 	fmt.Println("CloseClient")
-
 	c.QueryBuf = nil
 	//c.PendingWriteNode = nil
 	c.Reply.ListEmpty()
@@ -160,6 +159,9 @@ func CloseClient(s *Server, c *Client) {
 		ln := s.ClientsToClose.ListSearchKey(c)
 		s.ClientsToClose.ListDelNode(ln)
 	}
+	close(c.CloseCh)
+	close(c.ReadCh)
+	close(c.WriteCh)
 }
 
 func CloseClientAsync(s *Server, c *Client) {
@@ -1171,9 +1173,9 @@ func StartServer(s *Server) {
 	go UnixServer(s)
 }
 
-func StopServer(s *Server) {
+func CloseServer(s *Server) {
 	fmt.Println(s.LogLevel)
-	s.ServerLogDebugF("%s\n", "StopServer")
+	s.ServerLogDebugF("%s\n", "CloseServer")
 	s.CloseCh <- struct{}{}
 	fmt.Println("------>s.CloseCh")
 	CloseClientsInAsyncList(s)
@@ -1186,6 +1188,7 @@ func StopServer(s *Server) {
 		node = node.ListNextNode()
 	}
 	fmt.Println("Wait...")
+	close(s.CloseCh)
 }
 
 func HandleSignal(s *Server) {
@@ -1194,5 +1197,5 @@ func HandleSignal(s *Server) {
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	fmt.Println("Signale Channel", <-c)
 	s.ServerLogDebugF("%s\n", "HandleSignal, Pass Block")
-	StopServer(s)
+	CloseServer(s)
 }
