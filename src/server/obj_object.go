@@ -2,7 +2,6 @@ package server
 
 import (
 	. "redigo/src/constant"
-	"time"
 	. "redigo/src/structure"
 )
 
@@ -160,19 +159,6 @@ func createObject(s *Server, rtype int64, encoding int64, ) Object {
 	return obj
 }
 
-func LRUClock(s *Server) int64 {
-	if 1000/s.Hz <= LRU_CLOCK_RESOLUTION {
-		// server.Hz >= 1, serverCron will update LRU, save resources
-		return s.LruClock
-	} else {
-		return SimpleGetLRUClock()
-	}
-}
-
-func SimpleGetLRUClock() int64 {
-	mstime := time.Now().UnixNano() / 1000
-	return mstime / LRU_CLOCK_RESOLUTION & LRU_CLOCK_MAX
-}
 
 func CheckRType(o Objector, rtype int64) bool {
 	return o != nil && o.(*Object).RType == rtype

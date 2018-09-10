@@ -18,12 +18,6 @@ import (
 	"path/filepath"
 )
 
-//type ClientBufferLimitsConfig struct {
-//	HardLimitBytes        int64
-//	SoftLimitBytes        int64
-//	SoftLimitTimeDuration time.Duration
-//}
-
 type Server struct {
 	Pid                  int64
 	PidFile              string
@@ -68,11 +62,23 @@ type Server struct {
 	Loading              bool
 	CloseCh              chan struct{}
 	LogLevel             int64
-	//AlsoPropagate        *OpArray
-	//ClientObufLimits     []ClientBufferLimitsConfig
 }
 
-func (s *Server) CreateClient(conn net.Conn) *Client {
+func LRUClock(s *Server) int64 {
+	if 1000/s.Hz <= LRU_CLOCK_RESOLUTION {
+		// server.Hz >= 1, serverCron will update LRU, save resources
+		return s.LruClock
+	} else {
+		return SimpleGetLRUClock()
+	}
+}
+
+func SimpleGetLRUClock() int64 {
+	mstime := time.Now().UnixNano() / 1000
+	return mstime / LRU_CLOCK_RESOLUTION & LRU_CLOCK_MAX
+}
+
+func CreateClient(s *Server, conn net.Conn) *Client {
 	if conn != nil {
 		if s.TcpKeepAlive {
 			AnetSetTcpKeepALive(conn.(*net.TCPConn), s.TcpKeepAlive)
@@ -106,23 +112,21 @@ func (s *Server) CreateClient(conn net.Conn) *Client {
 		ReadCh:          make(chan struct{}, 1),
 		WriteCh:         make(chan struct{}, 1),
 		CloseCh:         make(chan struct{}, 1),
-		//PendingWriteNode: nil,
-		//UnblockedNode:    nil,
 	}
 	c.GetNextClientId(s)
 	SelectDB(s, &c, 0)
-	s.LinkClient(&c)
+	LinkClient(s, &c)
 	return &c
 }
 
-func (s *Server) LinkClient(c *Client) {
+func LinkClient(s *Server, c *Client) {
 	s.Clients.ListAddNodeTail(c)
 	s.ClientsMap[c.Id] = c
 	c.Node = s.Clients.ListTail()
 	s.StatConnCount++
 }
 
-func (s *Server) UnLinkClient(c *Client) {
+func UnLinkClient(s *Server, c *Client) {
 	if s.CurrentClient == c {
 		s.CurrentClient = nil
 	}
@@ -134,26 +138,15 @@ func (s *Server) UnLinkClient(c *Client) {
 		c.Conn.Close()
 		c.Conn = nil
 	}
-	//if c.WithFlags(CLIENT_PENDING_WRITE) {
-	//	s.ClientsPendingWrite.ListDelNode(c.PendingWriteNode)
-	//	c.PendingWriteNode = nil
-	//	c.DeleteFlags(CLIENT_PENDING_WRITE)
-	//}
-	//if c.WithFlags(CLIENT_UNBLOCKED) {
-	//	s.ClientsUnblocked.ListDelNode(c.UnblockedNode)
-	//	c.UnblockedNode = nil
-	//	c.DeleteFlags(CLIENT_UNBLOCKED)
-	//}
 }
 
 func CloseClient(s *Server, c *Client) {
 	fmt.Println("CloseClient")
 	c.QueryBuf = nil
-	//c.PendingWriteNode = nil
 	c.Reply.ListEmpty()
 	c.Reply = nil
 	c.ResetArgv()
-	s.UnLinkClient(c)
+	UnLinkClient(s, c)
 	if c.WithFlags(CLIENT_CLOSE_ASAP) {
 		ln := s.ClientsToClose.ListSearchKey(c)
 		s.ClientsToClose.ListDelNode(ln)
@@ -172,7 +165,8 @@ func CloseClientAsync(s *Server, c *Client) {
 }
 
 func CloseClientsInAsyncList(s *Server) {
-	fmt.Println("CloseClientsInAsyncList")
+	s.ServerLogDebugF("-->%v\n", "CloseClientsInAsyncList")
+
 	for s.ClientsToClose.ListLength() != 0 {
 		ln := s.ClientsToClose.ListHead()
 		c := ln.Value.(*Client)
@@ -182,35 +176,9 @@ func CloseClientsInAsyncList(s *Server) {
 	}
 }
 
-func (s *Server) GetClientById(id int64) *Client {
+func GetClientById(s *Server, id int64) *Client {
 	return s.ClientsMap[id]
 }
-
-func PrepareClientToWrite(c *Client) int64 {
-	//if c.WithFlags(CLIENT_LUA | CLIENT_MODULE) {
-	//	return C_OK
-	//}
-
-	if c.WithFlags(CLIENT_REPLY_OFF | CLIENT_REPLY_SKIP) {
-		return C_ERR
-	}
-
-	//if c.WithFlags(CLIENT_MASTER) && !c.WithFlags(CLIENT_MASTER_FORCE_REPLY) {
-	//	return C_ERR
-	//}
-	if c.Conn == nil {
-		// Fake client for AOF loading.
-		return C_ERR
-	}
-
-	//if !c.HasPendingReplies() && !(c.WithFlags(CLIENT_PENDING_WRITE)) {
-	//	c.AddFlags(CLIENT_PENDING_WRITE)
-	//	s.ClientsPendingWrite.ListAddNodeTail(c)
-	//}
-	return C_OK
-}
-
-
 
 // Write data in output buffers to client.
 func WriteToClient(s *Server, c *Client) {
@@ -258,9 +226,6 @@ func WriteToClient(s *Server, c *Client) {
 	}
 	s.StatNetOutputBytes += written
 	if written > 0 {
-		//if !c.WithFlags(CLIENT_MASTER) {
-		//	c.LastInteraction = s.UnixTime
-		//}
 		c.LastInteraction = s.UnixTime
 	}
 	if !c.HasPendingReplies() {
@@ -281,8 +246,8 @@ func ProcessInlineBuffer(s *Server, c *Client) int64 {
 
 	if newline == -1 {
 		if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
-			s.AddReplyError(c, "Protocol error: too big inline request")
-			s.SetProtocolError("too big inline request", c, 0)
+			AddReplyError(s, c, "Protocol error: too big inline request")
+			SetProtocolError(s, c, "too big inline request", 0)
 		}
 		return C_ERR
 	}
@@ -293,8 +258,8 @@ func ProcessInlineBuffer(s *Server, c *Client) int64 {
 	/* Split the input buffer up to the \r\n */
 	argvs := SplitArgs(c.QueryBuf[0:newline])
 	if argvs == nil {
-		s.AddReplyError(c, "Protocol error: unbalanced quotes in request")
-		s.SetProtocolError("unbalanced quotes in inline request", c, 0)
+		AddReplyError(s, c, "Protocol error: unbalanced quotes in request")
+		SetProtocolError(s, c, "unbalanced quotes in inline request", 0)
 		return C_ERR
 	}
 
@@ -330,8 +295,8 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 		newline := bytes.IndexByte(c.QueryBuf, '\r')
 		if newline < 0 {
 			if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
-				s.AddReplyError(c, "Protocol error: too big multibulk count request")
-				s.SetProtocolError("too big multibulk request", c, 0)
+				AddReplyError(s,c, "Protocol error: too big multibulk count request")
+				SetProtocolError(s, c, "too big multibulk request", 0)
 			}
 			return C_ERR
 		}
@@ -344,8 +309,8 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 		}
 		nulkNum, err := strconv.Atoi(string(c.QueryBuf[pos+1 : newline]))
 		if err != nil || nulkNum > 1024*1024 {
-			s.AddReplyError(c, "Protocol error: invalid multibulk length")
-			s.SetProtocolError("invalid multibulk length", c, 0)
+			AddReplyError(s, c, "Protocol error: invalid multibulk length")
+			SetProtocolError(s, c, "invalid multibulk length", 0)
 			return C_ERR
 		}
 		// pos start of bulks
@@ -366,8 +331,8 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 			newline := bytes.IndexByte(c.QueryBuf, '\r')
 			if newline < 0 {
 				if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
-					s.AddReplyError(c, "Protocol error: too big bulk count string")
-					s.SetProtocolError("too big bulk count string", c, 0)
+					AddReplyError(s, c, "Protocol error: too big bulk count string")
+					SetProtocolError(s, c, "too big bulk count string", 0)
 					return C_ERR
 				}
 				break
@@ -377,14 +342,14 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 				break
 			}
 			if c.QueryBuf[pos] != '$' {
-				s.AddReplyError(c, fmt.Sprintf("Protocol error: expected '$', got '%c'", c.QueryBuf[pos]))
-				s.SetProtocolError("expected $ but got something else", c, 0)
+				AddReplyError(s, c, fmt.Sprintf("Protocol error: expected '$', got '%c'", c.QueryBuf[pos]))
+				SetProtocolError(s, c, "expected $ but got something else", 0)
 				return C_ERR
 			}
 			nulkNum, err := strconv.Atoi(string(c.QueryBuf[pos+1 : newline]))
 			if err != nil || int64(nulkNum) > s.ProtoMaxBulkLen {
-				s.AddReplyError(c, "Protocol error: invalid bulk length")
-				s.SetProtocolError("invalid bulk length", c, 0)
+				AddReplyError(s, c, "Protocol error: invalid bulk length")
+				SetProtocolError(s, c, "invalid bulk length", 0)
 				return C_ERR
 			}
 			pos = newline + 2
@@ -457,40 +422,8 @@ func ReadQueryFromClient(s *Server, c *Client) {
 		return
 	}
 	ProcessInputBuffer(s, c)
-	//if !c.WithFlags(CLIENT_MASTER) {
-	//	s.ProcessInputBuffer(c)
-	//} else {
-	//	preOff := c.ReplyOff
-	//	s.ProcessInputBuffer(c)
-	//	applied := c.ReplyOff - preOff
-	//	if applied != 0 {
-	//	//	do replication from master to slave
-	//	}
-	//}
+
 }
-
-//func (s *Server) PauseClients(end time.Duration) {
-//	if !s.ClientsPaused || end > s.ClientsPauseEndTime {
-//		s.ClientsPauseEndTime = end
-//	}
-//	s.ClientsPaused = true
-//}
-
-//func (s *Server) ClientsArePasued() bool {
-//	if s.ClientsPaused && s.ClientsPauseEndTime < s.UnixTime {
-//		s.ClientsPaused = false
-//		iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
-//		for node := iter.ListNext(); node != nil; node = iter.ListNext() {
-//			c := node.Value.(*Client)
-//			if c.WithFlags(CLIENT_SLAVE | CLIENT_BLOCKED) {
-//				continue
-//			}
-//			c.AddFlags(CLIENT_UNBLOCKED)
-//			//s.ClientsUnblocked.ListAddNodeTail(c)
-//		}
-//	}
-//	return s.ClientsPaused
-//}
 
 /* This function is called every time, in the client structure 'c', there is
  * more query buffer to process, because we read more data from the socket
@@ -499,9 +432,6 @@ func ReadQueryFromClient(s *Server, c *Client) {
 func ProcessInputBuffer(s *Server, c *Client) {
 	s.CurrentClient = c
 	for len(c.QueryBuf) != 0 {
-		//if !c.WithFlags(CLIENT_SLAVE) && s.ClientsArePasued() {
-		//	break
-		//}
 		if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY | CLIENT_CLOSE_ASAP) {
 			break
 		}
@@ -527,15 +457,7 @@ func ProcessInputBuffer(s *Server, c *Client) {
 		if c.Argc == 0 {
 			c.Reset()
 		} else {
-			if ProcessCommand(s, c) == C_OK {
-				//if c.WithFlags(CLIENT_MASTER) && !c.WithFlags(CLIENT_MULTI) {
-				//	/* Update the applied replication offset of our master. */
-				//	c.ReplyOff = c.ReadReplyOff - int64(len(c.QueryBuf))
-				//}
-				//if !c.WithFlags(CLIENT_BLOCKED) || c.BType != BLOCKED_MODULE {
-				//	c.Reset()
-				//}
-			}
+			ProcessCommand(s, c)
 			if s.CurrentClient == nil {
 				break
 			}
@@ -583,17 +505,7 @@ func ProcessInputBuffer(s *Server, c *Client) {
  */
 func Call(s *Server, c *Client, flags int64) {
 	clientOldFlags := c.Flags
-	///* Sent the command to clients in MONITOR mode, only if the commands are
-	//* not generated from reading an AOF. */
-	//if (listLength(server.monitors) &&
-	//	!server.loading &&
-	//	!(c->cmd->flags & (CMD_SKIP_MONITOR|CMD_ADMIN)))
-	//{
-	//	replicationFeedMonitors(c,server.monitors,c->db->id,c->argv,c->argc);
-	//}
 	c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
-	//PrevAlsoPropagate := s.AlsoPropagate
-	//s.AlsoPropagate.Init()
 
 	dirty := s.Dirty
 	start := time.Now()
@@ -625,32 +537,12 @@ func Call(s *Server, c *Client, flags int64) {
 				propagateFlags &= ^PROPAGATE_AOF
 			}
 			if propagateFlags != PROPAGATE_NONE && !c.Cmd.WithFlags(CMD_MODULE) {
-				s.Propagate(c.Cmd, c.Db.Id, c.Argc, c.Argv, int64(propagateFlags))
+				Propagate(s, c.Cmd, c.Db.Id, c.Argc, c.Argv, int64(propagateFlags))
 			}
 		}
 	}
 	c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
 	c.AddFlags(clientOldFlags | CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
-
-	//if s.AlsoPropagate.OpNum != 0 {
-	//	if flags&CMD_CALL_PROPAGATE != 0 {
-	//		for j := int64(0); j < s.AlsoPropagate.OpNum; j++ {
-	//			op := s.AlsoPropagate.Ops[j]
-	//			target := op.Target
-	//			if flags&CMD_CALL_PROPAGATE_AOF == 0 {
-	//				target &= ^PROPAGATE_AOF
-	//			}
-	//			if flags&CMD_CALL_PROPAGATE_REPL == 0 {
-	//				target &= ^PROPAGATE_REPL
-	//			}
-	//			if target != 0 {
-	//				s.Propagate(op.Cmd, op.DbId, op.Argc, op.Argv, target)
-	//			}
-	//		}
-	//	}
-	//	s.AlsoPropagate.Init()
-	//}
-	//s.AlsoPropagate = PrevAlsoPropagate
 	s.StatNumCommands++
 }
 
@@ -668,185 +560,67 @@ func ProcessCommand(s *Server, c *Client) int64 {
 		 * go through checking for replication and QUIT will cause trouble
 		 * when FORCE_REPLICATION is enabled and would be implemented in
 		 * a regular command proc. */
-		s.AddReply(c, s.Shared.Ok)
+		AddReply(s, c, s.Shared.Ok)
 		c.AddFlags(CLIENT_CLOSE_AFTER_REPLY)
 		return C_ERR
 	}
-	c.Cmd = s.LookUpCommand(c.Argv[0])
+	c.Cmd = LookUpCommand(s, c.Argv[0])
 	c.LastCmd = c.Cmd
 	if c.Cmd == nil {
-		//c.FlagTransaction()
-		s.AddReplyError(c, fmt.Sprintf("unknown command '%s'", c.Argv[0]))
+		AddReplyError(s, c, fmt.Sprintf("unknown command '%s'", c.Argv[0]))
 		return C_OK
 	}
 	if (c.Cmd.Arity > 0 && c.Cmd.Arity != c.Argc) || c.Argc < -c.Cmd.Arity {
-		//c.FlagTransaction()
-		s.AddReplyError(c, fmt.Sprintf("wrong number of arguments for '%s' command", c.Argv[0]))
+		AddReplyError(s, c, fmt.Sprintf("wrong number of arguments for '%s' command", c.Argv[0]))
 		return C_OK
 	}
 	if s.RequirePassword != nil && c.Authenticated == 0 && &c.Cmd.Process != &AuthCommand {
-		//c.FlagTransaction()
-		s.AddReplyError(c, s.Shared.NoAuthErr)
+		AddReplyError(s, c, s.Shared.NoAuthErr)
 		return C_OK
 	}
-	//if (server.cluster_enabled &&
-	//	!(c->flags & CLIENT_MASTER) &&
-	//	!(c->flags & CLIENT_LUA &&
-	//		server.lua_caller->flags & CLIENT_MASTER) &&
-	//	!(c->cmd->getkeys_proc == NULL && c->cmd->firstkey == 0 &&
-	//		c->cmd->proc != execCommand))
-	//{
-	//	int hashslot;
-	//	int error_code;
-	//	clusterNode *n = getNodeByQuery(c,c->cmd,c->argv,c->argc,
-	//		&hashslot,&error_code);
-	//	if (n == NULL || n != server.cluster->myself) {
-	//		if (c->cmd->proc == execCommand) {
-	//			discardTransaction(c);
-	//		} else {
-	//			flagTransaction(c);
-	//		}
-	//		clusterRedirectClient(c,n,hashslot,error_code);
-	//		return C_OK;
-	//	}
-	//}
 	/* Handle the maxmemory directive.
 	 *
 	 * First we try to free some memory if possible (if there are volatile
 	 * keys in the dataset). If there are not the only thing we can do
 	 * is returning an error. */
 	if s.MaxMemory != 0 {
-		result := s.FreeMemoryIfNeeded()
+		result := FreeMemoryIfNeeded(s)
 		if s.CurrentClient == nil {
 			return C_ERR
 		}
 		if c.Cmd.WithFlags(CMD_DENYOOM) && result == C_ERR {
-			//c.FlagTransaction()
-			s.AddReplyError(c, s.Shared.OOMErr)
+			AddReplyError(s, c, s.Shared.OOMErr)
 			return C_OK
 		}
 	}
 
-	///* Don't accept write commands if there are problems persisting on disk
-	//* and if this is a master instance. */
-	//if (((server.stop_writes_on_bgsave_err &&
-	//	server.saveparamslen > 0 &&
-	//	server.lastbgsave_status == C_ERR) ||
-	//	server.aof_last_write_status == C_ERR) &&
-	//	server.masterhost == NULL &&
-	//	(c->cmd->flags & CMD_WRITE ||
-	//		c->cmd->proc == pingCommand))
-	//{
-	//	flagTransaction(c);
-	//	if (server.aof_last_write_status == C_OK)
-	//	addReply(c, shared.bgsaveerr);
-	//	else
-	//	addReplySds(c,
-	//		sdscatprintf(sdsempty(),
-	//			"-MISCONF Errors writing to the AOF file: %s\r\n",
-	//			strerror(server.aof_last_write_errno)));
-	//	return C_OK;
-	//}
-	///* Don't accept write commands if there are not enough good slaves and
-	//* user configured the min-slaves-to-write option. */
-	//if (server.masterhost == NULL &&
-	//	server.repl_min_slaves_to_write &&
-	//	server.repl_min_slaves_max_lag &&
-	//	c->cmd->flags & CMD_WRITE &&
-	//	server.repl_good_slaves_count < server.repl_min_slaves_to_write)
-	//{
-	//	flagTransaction(c);
-	//	addReply(c, shared.noreplicaserr);
-	//	return C_OK;
-	//}
-	///* Don't accept write commands if this is a read only slave. But
-	//* accept write commands if this is our master. */
-	//if (server.masterhost && server.repl_slave_ro &&
-	//	!(c->flags & CLIENT_MASTER) &&
-	//	c->cmd->flags & CMD_WRITE)
-	//{
-	//	addReply(c, shared.roslaveerr);
-	//	return C_OK;
-	//}
-	///* Only allow SUBSCRIBE and UNSUBSCRIBE in the context of Pub/Sub */
-	//if (c->flags & CLIENT_PUBSUB &&
-	//	c->cmd->proc != pingCommand &&
-	//	c->cmd->proc != subscribeCommand &&
-	//	c->cmd->proc != unsubscribeCommand &&
-	//	c->cmd->proc != psubscribeCommand &&
-	//	c->cmd->proc != punsubscribeCommand) {
-	//	addReplyError(c,"only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT allowed in this context");
-	//	return C_OK;
-	//}
-	///* Only allow commands with flag "t", such as INFO, SLAVEOF and so on,
-	//* when slave-serve-stale-data is no and we are a slave with a broken
-	//* link with master. */
-	//if (server.masterhost && server.repl_state != REPL_STATE_CONNECTED &&
-	//	server.repl_serve_stale_data == 0 &&
-	//	!(c->cmd->flags & CMD_STALE))
-	//{
-	//	flagTransaction(c);
-	//	addReply(c, shared.masterdownerr);
-	//	return C_OK;
-	//}
 	/* Loading DB? Return an error if the command has not the
 	 * CMD_LOADING flag. */
 	if s.Loading && c.Cmd.WithFlags(CMD_LOADING) {
-		s.AddReply(c, s.Shared.LoadingErr)
+		AddReply(s, c, s.Shared.LoadingErr)
 		return C_OK
 	}
 
-	///* Lua script too slow? Only allow a limited number of commands. */
-	//if (server.lua_timedout &&
-	//	c->cmd->proc != authCommand &&
-	//	c->cmd->proc != replconfCommand &&
-	//	!(c->cmd->proc == shutdownCommand &&
-	//		c->argc == 2 &&
-	//		tolower(((char*)c->argv[1]->ptr)[0]) == 'n') &&
-	//!(c->cmd->proc == scriptCommand &&
-	//	c->argc == 2 &&
-	//	tolower(((char*)c->argv[1]->ptr)[0]) == 'k'))
-	//{
-	//flagTransaction(c);
-	//addReply(c, shared.slowscripterr);
-	//return C_OK;
-	//}
-	///* Exec the command */
-	//if (c->flags & CLIENT_MULTI &&
-	//	c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
-	//	c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
-	//{
-	//	queueMultiCommand(c);
-	//	addReply(c,shared.queued);
-	//} else {
-	//call(c,CMD_CALL_FULL);
-	//c->woff = server.master_repl_offset;
-	//if (listLength(server.ready_keys))
-	//handleClientsBlockedOnKeys();
-	//}
-	// Exec the command
-	// multi TODO
-	// blocked commands BLPOP TODO
 	Call(s, c, CMD_CALL_FULL)
 	return C_OK
 }
 
-func (s *Server) FreeMemoryIfNeeded() int64 {
+func FreeMemoryIfNeeded(s *Server) int64 {
 	// TODO:
 	return C_OK
 }
 
-func (s *Server) Propagate(cmd *Command, dbid int64, argc int64, argv []string, flags int64) {
+func Propagate(s *Server, cmd *Command, dbid int64, argc int64, argv []string, flags int64) {
 	//TODO:
 }
 
-func (s *Server) LookUpCommand(name string) *Command {
+func LookUpCommand(s *Server, name string) *Command {
 	return s.Commands[name]
 }
 
-func (s *Server) SetProtocolError(err string, c *Client, pos int64) {
+func SetProtocolError(s *Server, c *Client, err string, pos int64) {
+	s.ServerLogErrorF("%s\n", err)
 	if s.LogLevel <= LL_INFO {
-		//clientStr := c.CatClientInfoString(s)
 		errorStr := fmt.Sprintf("Query buffer during protocol error: '%s'", c.QueryBuf)
 		buf := make([]byte, len(errorStr))
 		for i := 0; i < len(errorStr); i++ {
@@ -861,7 +635,7 @@ func (s *Server) SetProtocolError(err string, c *Client, pos int64) {
 	}
 }
 
-func (s *Server) GetAllClientInfoString(ctype int64) string {
+func GetAllClientInfoString(s *Server, ctype int64) string {
 	str := bytes.Buffer{}
 	listIter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	ln := listIter.ListNext()
@@ -876,15 +650,6 @@ func (s *Server) GetAllClientInfoString(ctype int64) string {
 	return str.String()
 }
 
-//func AsyncCloseClientOnOutputBufferLimitReached(s *Server, c *Client) {
-//	if c.ReplySize == 0 || c.WithFlags(CLIENT_CLOSE_ASAP) {
-//		return
-//	}
-//	if CheckOutputBufferLimits(s, c) {
-//		CloseClientAsync(s, c)
-//	}
-//}
-
 func DbDeleteSync(s *Server, c *Client, key string) bool {
 	// TODO expire things
 	c.Db.Delete(key)
@@ -893,6 +658,7 @@ func DbDeleteSync(s *Server, c *Client, key string) bool {
 
 func DbDeleteAsync(s *Server, c *Client, key string) bool {
 	// TODO
+	c.Db.Delete(key)
 	return true
 }
 
@@ -902,6 +668,10 @@ func SelectDB(s *Server, c *Client, dbId int64) int64 {
 	}
 	c.Db = s.Dbs[dbId]
 	return C_OK
+}
+
+func CreateShared(s *Server) {
+
 }
 
 func ServerCron(s *Server) {
@@ -929,11 +699,11 @@ func ServerExists() (int, error) {
 }
 
 func CreateServer() *Server {
-	fmt.Printf("-->%v\n", "CreateServer")
+	fmt.Printf("-->%s\n", "CreateServer")
 
 	pidFile := os.TempDir() + "redigo.pid"
 	unixSocketPath := os.TempDir() + "redigo.sock"
-	if pid ,err1 := ServerExists(); err1 == nil {
+	if pid, err1 := ServerExists(); err1 == nil {
 		pid = os.Getpid()
 		if redigoPidFile, err2 := os.Create(pidFile); err2 == nil {
 			redigoPidFile.WriteString(fmt.Sprintf("%d", pid))
@@ -1022,7 +792,7 @@ func CloseServer(s *Server) {
 	// clear clients
 	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	node := iter.Next
-	fmt.Println(node)
+	fmt.Println("node: ", node)
 	for node != nil {
 		CloseClient(s, node.Value.(*Client))
 		node = node.ListNextNode()
@@ -1037,6 +807,6 @@ func HandleSignal(s *Server) {
 	s.ServerLogDebugF("-->%v\n", "HandleSignal")
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
-	s.ServerLogDebugF("-->%v: <%s>\n", "Signal", <-c)
+	s.ServerLogDebugF("-->%v: <%v>\n", "Signal", <-c)
 	CloseServer(s)
 }

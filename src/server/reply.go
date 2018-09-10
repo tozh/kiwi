@@ -47,8 +47,8 @@ func (s *Server) AddReplyToList(c *Client, str string) {
 	//AsyncCloseClientOnOutputBufferLimitReached(s, c)
 }
 
-func (s *Server) AddReply(c *Client, str string) {
-	if PrepareClientToWrite(c) != C_OK {
+func AddReply(s *Server, c *Client, str string) {
+	if c.PrepareClientToWrite() != C_OK {
 		return
 	}
 	if s.AddReplyToBuffer(c, str) != C_OK {
@@ -56,40 +56,40 @@ func (s *Server) AddReply(c *Client, str string) {
 	}
 }
 
-func (s *Server) AddReplyStrObj(c *Client, o *StrObject) {
+func AddReplyStrObj(s *Server, c *Client, o *StrObject) {
 	if !CheckRType(o, OBJ_RTYPE_STR) {
 		return
 	}
 	str, err := GetStrObjectValueString(o)
 	if err == nil {
-		s.AddReply(c, str)
+		AddReply(s, c, str)
 	} else {
 		return
 	}
 }
 
-func (s *Server) AddReplyError(c *Client, str string) {
+func AddReplyError(s *Server, c *Client, str string) {
 	if len(str) != 0 || str[0] != '-' {
-		s.AddReply(c, "-ERR ")
+		AddReply(s, c, "-ERR ")
 	}
-	s.AddReply(c, str)
-	s.AddReply(c, "\r\n")
+	AddReply(s, c, str)
+	AddReply(s, c, "\r\n")
 }
 
-func (s *Server) AddReplyErrorFormat(c *Client, format string, a ...interface{}) {
+func AddReplyErrorFormat(s *Server, c *Client, format string, a ...interface{}) {
 	str := fmt.Sprintf(format, a)
-	s.AddReplyError(c, str)
+	AddReplyError(s, c, str)
 }
 
-func (s *Server) AddReplyStatus(c *Client, str string) {
-	s.AddReply(c, "+")
-	s.AddReply(c, str)
-	s.AddReply(c, "\r\n")
+func AddReplyStatus(s *Server, c *Client, str string) {
+	AddReply(s, c, "+")
+	AddReply(s, c, str)
+	AddReply(s, c, "\r\n")
 }
 
 func (s *Server) AddReplyStatusFormat(c *Client, format string, a ...interface{}) {
 	str := fmt.Sprintf(format, a)
-	s.AddReplyStatus(c, str)
+	AddReplyStatus(s, c, str)
 }
 
 //func (s *Server) AddReplyHelp(c *Client, help []string) {
@@ -100,14 +100,14 @@ func (s *Server) AddReplyStatusFormat(c *Client, format string, a ...interface{}
 //	}
 //}
 
-func (s *Server) AddReplyIntWithPrifix(c *Client, i int64, prefix byte) {
+func AddReplyIntWithPrifix(s *Server, c *Client, i int64, prefix byte) {
 	/* Things like $3\r\n or *2\r\n are emitted very often by the protocol
 	so we have a few shared objects to use if the integer is small
 	like it is most of the times. */
 	if prefix == '*' && i >= 0 && i < SHARED_BULKHDR_LEN {
-		s.AddReply(c, s.Shared.MultiBulkHDR[i])
+		AddReply(s, c, s.Shared.MultiBulkHDR[i])
 	} else if prefix == '$' && i >= 0 && i < SHARED_BULKHDR_LEN {
-		s.AddReply(c, s.Shared.MultiBulkHDR[i])
+		AddReply(s, c, s.Shared.MultiBulkHDR[i])
 	} else {
 		str := strconv.FormatInt(i, 10)
 		buf := bytes.Buffer{}
@@ -115,64 +115,64 @@ func (s *Server) AddReplyIntWithPrifix(c *Client, i int64, prefix byte) {
 		buf.WriteString(str)
 		buf.WriteByte('\r')
 		buf.WriteByte('\n')
-		s.AddReply(c, buf.String())
+		AddReply(s, c, buf.String())
 	}
 }
 
-func (s *Server) AddReplyInt(c *Client, i int64) {
+func AddReplyInt(s *Server, c *Client, i int64) {
 	if i == 0 {
-		s.AddReply(c, s.Shared.Zero)
+		AddReply(s, c, s.Shared.Zero)
 	} else if i == 1 {
-		s.AddReply(c, s.Shared.One)
+		AddReply(s, c, s.Shared.One)
 	} else {
-		s.AddReplyIntWithPrifix(c, i, ':')
+		AddReplyIntWithPrifix(s, c, i, ':')
 	}
 }
 
-func (s *Server) AddReplyMultiBulkLength(c *Client, length int64) {
-	s.AddReplyIntWithPrifix(c, length, '*')
+func AddReplyMultiBulkLength(s *Server, c *Client, length int64) {
+	AddReplyIntWithPrifix(s, c, length, '*')
 }
 
 /* Create the length prefix of a bulk reply, example: $2234 */
-func (s *Server) AddReplyBulkLengthString(c *Client, str string) {
+func AddReplyBulkLengthString(s *Server, c *Client, str string) {
 	length := int64(len(str))
-	s.AddReplyIntWithPrifix(c, length, '$')
+	AddReplyIntWithPrifix(s, c, length, '$')
 }
 
-func (s *Server) AddReplyBulkLengthStrObj(c *Client, o *StrObject) {
+func AddReplyBulkLengthStrObj(s *Server, c *Client, o *StrObject) {
 	if !CheckRType(o, OBJ_RTYPE_STR) {
 		return
 	}
 	str, err := GetStrObjectValueString(o)
 	if err == nil {
-		s.AddReplyBulkLengthString(c, str)
+		AddReplyBulkLengthString(s, c, str)
 	} else {
 		return
 	}
 }
 
-func (s *Server) AddReplyBulk(c *Client, o *StrObject) {
-	s.AddReplyBulkLengthStrObj(c, o)
-	s.AddReplyStrObj(c, o)
-	s.AddReply(c, s.Shared.Crlf)
+func AddReplyBulk(s *Server, c *Client, o *StrObject) {
+	AddReplyBulkLengthStrObj(s, c, o)
+	AddReplyStrObj(s, c, o)
+	AddReply(s, c, s.Shared.Crlf)
 }
 
-func (s *Server) AddReplyBulkString(c *Client, str string) {
+func AddReplyBulkString(s *Server, c *Client, str string) {
 	if str == "" {
-		s.AddReply(c, s.Shared.NullBulk)
+		AddReply(s, c, s.Shared.NullBulk)
 	} else {
-		s.AddReplyBulkLengthString(c, str)
-		s.AddReply(c, str)
-		s.AddReply(c, s.Shared.Crlf)
+		AddReplyBulkLengthString(s, c, str)
+		AddReply(s, c, str)
+		AddReply(s, c, s.Shared.Crlf)
 	}
 }
 
-func (s *Server) AddReplyBulkInt(c *Client, i int64) {
+func AddReplyBulkInt(s *Server, c *Client, i int64) {
 	str := strconv.FormatInt(i, 10)
-	s.AddReplyBulkString(c, str)
+	AddReplyBulkString(s, c, str)
 }
 
-func (s *Server) AddReplySubcommandSyntaxError(c *Client) {
+func AddReplySubcommandSyntaxError(s *Server, c *Client) {
 	cmd := c.Argv[0]
-	s.AddReplyErrorFormat(c, "Unknown subcommand or wrong number of arguments for '%s'. Try %s HELP.", cmd, strings.ToUpper(cmd))
+	AddReplyErrorFormat(s, c, "Unknown subcommand or wrong number of arguments for '%s'. Try %s HELP.", cmd, strings.ToUpper(cmd))
 }

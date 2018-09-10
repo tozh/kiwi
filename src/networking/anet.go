@@ -66,33 +66,3 @@ func AnetListenTcp(tcpType string, ip string, port int64) *net.TCPListener {
 	}
 	return listener
 }
-
-//func AnetAccept(listener net.Listener) net.Conn {
-//	for {
-//		conn, err := listener.Accept()
-//		if err != nil {
-//			AnetSetErrorFormat("Accept error: %s", error)
-//			continue
-//		}
-//		//会打断for 应该让for一直存在
-//		//这块代码重写
-//		return conn
-//	}
-//}
-//
-//func AnetTcpServer(tcpType string, ip string, port int64) net.Conn {
-//	// tcpType: "tcp4" or "tcp6"
-//	listener := AnetListenTcp(tcpType, ip, port)
-//	if listener == nil {
-//		return nil
-//	}
-//	return AnetAccept(listener)
-//}
-//
-//func AnetUnixServer(address string) net.Conn {
-//	listener := AnetListenUnix(address)
-//	if listener == nil {
-//		return nil
-//	}
-//	return AnetAccept(listener)
-//}

@@ -7,12 +7,8 @@ import (
 )
 
 type Db struct {
-	Dict map[string]Objector
-	//Expires map[Objector]int64
-	Id int64
-	//AvgTTL int64
-	//WatchedKeys map[string] int64
-	//DefragLater *List
+	Dict  map[string]Objector
+	Id    int64
 	mutex sync.RWMutex
 }
 
@@ -91,7 +87,7 @@ func (db *Db) FlushAll() {
 }
 
 func CreateDb(id int64) *Db {
-	return &Db {
+	return &Db{
 		make(map[string]Objector),
 		id,
 		sync.RWMutex{},

@@ -40,7 +40,7 @@ func TcpServer(s *Server, ip string) {
 }
 
 func CommonServer(s *Server, conn net.Conn, flags int64, ip string) {
-	c := s.CreateClient(conn)
+	c := CreateClient(s, conn)
 	if c == nil {
 		conn.Close()
 		CloseClient(s, c)

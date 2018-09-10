@@ -38,15 +38,6 @@ type Client struct {
 	ReadCh          chan struct{}
 	WriteCh         chan struct{}
 	CloseCh         chan struct{}
-	//UnblockedNode    *ListNode
-	//PendingWriteNode *ListNode
-	//ReplyOff                 int64
-	//ReplyAckOff              int64
-	//ObufSoftLimitReachedTime time.Time
-	//ReplyAckTime             time.Time
-	//ReadReplyOff             int64
-	//BType                    int64
-	//WOff                     int64 // Last write global replication offset.
 }
 
 func (c *Client) WithFlags(flags int64) bool {
@@ -148,10 +139,6 @@ func (c *Client) GetOutputBufferMemoryUsage() int64 {
 
 // resetClient prepare the client to process the next command
 func (c *Client) Reset() {
-	//var prevCmd CommandProcess = nil
-	//if c.Cmd != nil {
-	//	prevCmd = c.Cmd.Process
-	//}
 	c.ResetArgv()
 	c.RequestType = 0
 	c.MultiBulkLen = 0
@@ -170,17 +157,15 @@ func (c *Client) ResetArgv() {
 	c.Argv = nil
 }
 
-/* Flag the transacation as DIRTY_EXEC so that EXEC will fail.
-* Should be called every time there is an error while queueing a command. */
-//func (c *Client) FlagTransaction() {
-//	if c.WithFlags(CLIENT_MULTI) {
-//		c.AddFlags(CLIENT_DIRTY_EXEC);
-//	}
-//}
-//
-//func (c *Client) DiscardTransation() {
-//
-//}
+func (c *Client) PrepareClientToWrite() int64 {
+	if c.WithFlags(CLIENT_REPLY_OFF | CLIENT_REPLY_SKIP) {
+		return C_ERR
+	}
+	if c.Conn == nil {
+		return C_ERR
+	}
+	return C_OK
+}
 
 // functions for client
 func CopyClientOutputBuffer(dst *Client, src *Client) {
@@ -190,36 +175,6 @@ func CopyClientOutputBuffer(dst *Client, src *Client) {
 	dst.BufPos = src.BufPos
 	dst.ReplySize = src.ReplySize
 }
-
-//func CheckOutputBufferLimits(s *Server, c *Client) bool {
-//	usedMem := c.GetOutputBufferMemoryUsage()
-//	ctype := c.GetClientType()
-//	hard := false
-//	soft := false
-//	if ctype == CLIENT_TYPE_MASTER {
-//		ctype = CLIENT_TYPE_NORMAL
-//	}
-//	if s.ClientObufLimits[ctype].HardLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].HardLimitBytes {
-//		hard = true
-//	}
-//	if s.ClientObufLimits[ctype].SoftLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].SoftLimitBytes {
-//		soft = true
-//	}
-//	if soft == true {
-//		if c.ObufSoftLimitReachedTime == time.Unix(0, 0) {
-//			c.ObufSoftLimitReachedTime = s.UnixTime
-//			soft = false /* First time we see the soft limit reached */
-//		} else {
-//			elapsed := s.UnixTime.Sub(c.ObufSoftLimitReachedTime)
-//			if elapsed <= s.ClientObufLimits[ctype].SoftLimitTimeDuration {
-//				soft = false
-//			}
-//		}
-//	} else {
-//		c.ObufSoftLimitReachedTime = time.Unix(0, 0)
-//	}
-//	return soft || hard
-//}
 
 func CatClientInfoString(s *Server, c *Client) string {
 	flags := bytes.Buffer{}

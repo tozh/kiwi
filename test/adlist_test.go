@@ -1,7 +1,8 @@
 package test
 
 import (
-	"redigo/src"
+	."redigo/src/structure"
+	."redigo/src/constant"
 	"fmt"
 )
 
@@ -12,7 +13,7 @@ type data struct{
 }
 
 func test() {
-	list := src.ListCreate()
+	list := ListCreate()
 	for i:=0;i<10;i++ {
 		d := data{
 			"tong",
@@ -20,15 +21,15 @@ func test() {
 		}
 		list.ListAddNodeTail(d)
 	}
-	iter := list.ListGetIterator(src.ITERATION_DIRECTION_INORDER)
+	iter := list.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	node := iter.ListNext()
 	for node!=nil {
 		fmt.Println(node.ListNodeValue())
 		node = iter.ListNext()
 	}
 
-	cpList := src.ListDup(list)
-	iter2 := cpList.ListGetIterator(src.ITERATION_DIRECTION_INORDER)
+	cpList := ListDup(list)
+	iter2 := cpList.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	node2 := iter2.ListNext()
 	for node2!=nil {
 		fmt.Println(node2.ListNodeValue())
