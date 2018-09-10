@@ -1,8 +1,7 @@
-package object
+package server
 
 import (
 	. "redigo/src/constant"
-	. "redigo/src/server"
 	"strconv"
 	"math"
 	"errors"

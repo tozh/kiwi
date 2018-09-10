@@ -1,7 +1,6 @@
 package server
 
 import (
-	. "redigo/src/object"
 	. "redigo/src/constant"
 	"strings"
 	"strconv"
@@ -156,6 +155,7 @@ var FlushAllCommand CommandProcess = func(s *Server, c *Client) {
 	if s.ConfigFlushAll {
 		c.Db.FlushAll()
 		s.AddReply(c, s.Shared.Ok)
+	//	TODO update aof or rdb
 	}
 	s.Dirty++
 }
@@ -420,4 +420,5 @@ var RandomKeyCommand CommandProcess = func(s *Server, c*Client) {
 		s.AddReplyBulkString(c, key)
 	}
 }
+
 

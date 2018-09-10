@@ -111,7 +111,7 @@ const CLIENT_TYPE_NORMAL = 0                   /* Normal req-reply clients + MON
 const CLIENT_TYPE_SLAVE = 1                    /* Slaves. */
 const CLIENT_TYPE_PUBSUB = 2                   /* Clients subscribed to PubSub channels. */
 const CLIENT_TYPE_MASTER = 3                   /* Master. */
-const CLIENT_TYPE_OBUF_COUNT = 3               /* Number of clients to expose to output
+const CLIENT_TYPE_OBUF_COUNT = 4               /* Number of clients to expose to output
                                     buffer configuration. Just the first
                                     three: normal, slave, pubsub. */
 /* Networking Constants */
@@ -129,11 +129,11 @@ const NET_MAX_WRITES_PER_EVENT = 1024 * 64
 
 /* Log levels */
 const LL_DEBUG = 0
-const LL_VERBOSE = 1
+const LL_INFO = 1
 const LL_NOTICE = 2
 const LL_WARNING = 3
 const LL_RAW = (1 << 10) /* Modifier to log without timestamp */
-const CONFIG_DEFAULT_VERBOSITY = LL_NOTICE
+const CONFIG_DEFAULT_LOGLEVEL = LL_NOTICE
 
 /* Command flags. Please check the command table defined in the redis.c file
  * for more information about the meaning of every flag. */
@@ -168,3 +168,9 @@ const CMD_CALL_FULL = CMD_CALL_SLOWLOG | CMD_CALL_STATS | CMD_CALL_PROPAGATE
 const PROPAGATE_NONE = 0
 const PROPAGATE_AOF = 1
 const PROPAGATE_REPL = 2
+
+const DEFAULT_DB_NUM = 16
+
+const CONFIG_DEFAULT_PROTO_MAX_BULK_LEN = 512*1024*1024
+const CONFIG_DEFAULT_MAXMEMORY = 0
+const CONFIG_DEFAULT_MAX_CLIENTS = 10000

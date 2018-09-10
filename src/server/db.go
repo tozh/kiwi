@@ -1,8 +1,7 @@
-package db
+package server
 
 import (
 	"strconv"
-	. "redigo/src/object"
 	. "redigo/src/constant"
 	"sync"
 )
@@ -89,4 +88,12 @@ func (db *Db) FlushAll() {
 	db.mutex.Lock()
 	db.Dict = make(map[string]Objector)
 	db.mutex.Unlock()
+}
+
+func CreateDb(id int64) *Db {
+	return &Db {
+		make(map[string]Objector),
+		id,
+		sync.RWMutex{},
+	}
 }

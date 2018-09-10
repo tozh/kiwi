@@ -2,8 +2,6 @@ package server
 
 import (
 	. "redigo/src/structure"
-	. "redigo/src/db"
-	. "redigo/src/object"
 	. "redigo/src/constant"
 	. "redigo/src/networking"
 	"sync"
@@ -13,113 +11,66 @@ import (
 	"strings"
 	"net"
 	"time"
+	"os"
+	"os/signal"
+	"syscall"
+	"io/ioutil"
+	"errors"
+	"path/filepath"
 )
 
 type ClientBufferLimitsConfig struct {
-	HardLimitBytes int64
-	SoftLimitBytes int64
-	SoftLimitTime  time.Duration
+	HardLimitBytes        int64
+	SoftLimitBytes        int64
+	SoftLimitTimeDuration time.Duration
 }
 
 type Server struct {
-	Pid          int64
-	PidFile      string
-	ConfigFile   string
-	ExecFile     string
-	ExecArgv     []string
-	Hz           int64 // serverCron() calls frequency in hertz
-	Dbs          []*Db
-	DbNum        int64
-	Commands     map[string]*Command
-	OrigCommands map[string]*Command
-
-	UnixTime         time.Duration // UnixTime in millisecond
-	LruClock         int64         // Clock for LRU eviction
-	ShutdownNeedAsap bool
-
-	CronLoops int64
-
-	LoadModuleQueue *List // List of modules to load at startup.
-	NextClientId    int64
-
-	// Network
-	Port           int64 // TCP listening port
-	BindAddrs      [CONFIG_BINDADDR_MAX]string
-	BindAddrCount  int64  // Number of addresses in server.bindaddr[]
-	UnixSocketPath string // UNIX socket path
-	//IpFileDesc []string  // TCP socket file descriptors
-	//SocketFileDesc string // Unix socket file descriptor
-	CurrentClient  *Client
-	Clients        *List // List of active clients
-	ClientsMap     map[int64]*Client
-	ClientsToClose *List // Clients to close asynchronously
-	//ClientsPendingWrite  *List // There is to write or install handler.
-	//ClientsUnblocked     *List //
-	ClientObufLimits     [CLIENT_TYPE_OBUF_COUNT]ClientBufferLimitsConfig
+	Pid                  int64
+	PidFile              string
+	ConfigFile           string
+	ExecFile             string
+	ExecArgv             []string
+	Hz                   int64 // serverCron() calls frequency in hertz
+	Dbs                  []*Db
+	DbNum                int64
+	Commands             map[string]*Command
+	OrigCommands         map[string]*Command
+	UnixTime             time.Time // UnixTime in millisecond
+	LruClock             int64     // Clock for LRU eviction
+	CronLoops            int64
+	NextClientId         int64
+	Port                 int64 // TCP listening port
+	BindAddrs            []string
+	BindAddrCount        int64  // Number of addresses in server.bindaddr[]
+	UnixSocketPath       string // UNIX socket path
+	CurrentClient        *Client
+	Clients              *List // List of active clients
+	ClientsMap           map[int64]*Client
+	ClientsToClose       *List // Clients to close asynchronously
 	ClientMaxQueryBufLen int64
 	MaxClients           int64
 	ProtectedMode        bool // Don't accept external connections.
-	Password             string
 	RequirePassword      *string
 	TcpKeepAlive         bool
-	Verbosity            int64 // loglevel in redis.conf
 	ProtoMaxBulkLen      int64
 	ClientsPaused        bool
-	ClientsPauseEndTime  time.Duration
-	//Loading bool  // Server is loading date from disk if true
-	//LoadingTotalSize int64
-	//LoadingLoadedSize int64
-	//LoadingStartTime int64
-	//
-	//
-	//// Configuration
-	//MaxIdleTimeSec int64  // Client timeout in seconds
-	//TcpKeepAlive bool
-	//
-	//
-	Dirty int64 // Changes to DB from the last save
-
-	// DirtyBeforeBgSave  //  Used to restore dirty on failed BGSAVE
-	//// AOF persistence
-	//AofState int64  //  AOF(ON|OFF|WAIT_REWRITE)
-	//AofChildPid int64  // PID if rewriting process
-	//AofFileSync int64  // Kind of fsync() policy
-	//AofFileName string
-	//AofRewirtePercent int64  // Rewrite AOF if % growth is > M and...
-	//AofRewriteMinSize int64
-	//AofRewriteMaxSize int64
-	//AofRewriteScheduled bool  // Rewrite once BGSAVE terminates.
-	//AofRewriteBufBlocks *List  // Hold changes during AOF rewrites
-	//AofBuf string  // Aof buffer
-	//AofFileDesc int64  // File descriptor of currently selected AOF file
-	//AofSelectedDb bool  // Currently selected DB in AOF
-	//AofPropagate []*RedisOp  // Additional command to propagate.
-	//// RDB persistence
-	//
-	//// Logging
-	//LogFile string
-	//SysLogEnable bool
-	//
-	//
-	//// Zip structure config
-	//HashMaxZiplistEntries int64
-	//HashMaxZiplistValue int64
-	//SetMaxInsetEntrie int64
-	//ZSetMaxZiplistEntries int64
-	//ZSetMaxZiplistvalue int64
-
-	Shared             SharedObjects
-	StatRejectedConn   int64
-	StatConnCount      int64
-	StatNetOutputBytes int64
-	StatNetInputBytes  int64
-	StatNumCommands    int64
-	ConfigFlushAll     bool
-	mutex              sync.Mutex
-	MaxMemory          int64
-	Loading            bool
-	AlsoPropagate      *OpArray
-	CloseCh            chan struct{}
+	ClientsPauseEndTime  time.Time
+	Dirty                int64 // Changes to DB from the last save
+	Shared               *SharedObjects
+	StatRejectedConn     int64
+	StatConnCount        int64
+	StatNetOutputBytes   int64
+	StatNetInputBytes    int64
+	StatNumCommands      int64
+	ConfigFlushAll       bool
+	mutex                sync.RWMutex
+	MaxMemory            int64
+	Loading              bool
+	CloseCh              chan struct{}
+	LogLevel             int64
+	//AlsoPropagate        *OpArray
+	//ClientObufLimits     []ClientBufferLimitsConfig
 }
 
 func (s *Server) CreateClient(conn net.Conn) *Client {
@@ -129,31 +80,38 @@ func (s *Server) CreateClient(conn net.Conn) *Client {
 		}
 	}
 	createTime := s.UnixTime
-	var c = Client{
-		Id:               0,
-		Conn:             conn,
-		Name:             "",
-		QueryBuf:         make([]byte, PROTO_INLINE_MAX_SIZE),
-		QueryBufPeak:     0,
-		Argc:             0,                 // count of arguments
-		Argv:             make([]string, 5), // arguments of current command
-		Cmd:              nil,
-		LastCmd:          nil,
-		Reply:            ListCreate(),
-		ReplySize:        0,
-		CreateTime:       createTime,
-		LastInteraction:  createTime,
-		Buf:              make([]byte, PROTO_REPLY_CHUNK_BYTES),
-		BufPos:           0,
-		SentLen:          0,
-		Flags:            0,
-		Node:             nil,
-		PendingWriteNode: nil,
-		UnblockedNode:    nil,
-
+	c := Client{
+		Id:              0,
+		Conn:            conn,
+		Name:            "",
+		QueryBuf:        make([]byte, PROTO_INLINE_MAX_SIZE),
+		QueryBufPeak:    0,
+		Argc:            0,                 // count of arguments
+		Argv:            make([]string, 0), // arguments of current command
+		Cmd:             nil,
+		LastCmd:         nil,
+		Reply:           ListCreate(),
+		ReplySize:       0,
+		CreateTime:      createTime,
+		LastInteraction: createTime,
+		Buf:             make([]byte, PROTO_REPLY_CHUNK_BYTES),
+		BufPos:          0,
+		SentLen:         0,
+		Flags:           0,
+		Node:            nil,
+		PeerId:          "",
+		RequestType:     0,
+		MultiBulkLen:    0,
+		BulkLen:         0,
+		Authenticated:   0,
+		ReadCh:          make(chan struct{}),
+		WriteCh:         make(chan struct{}),
+		CloseCh:         make(chan struct{}),
+		//PendingWriteNode: nil,
+		//UnblockedNode:    nil,
 	}
 	c.GetNextClientId(s)
-	SelectDB(s, &c,0)
+	SelectDB(s, &c, 0)
 	s.LinkClient(&c)
 	return &c
 }
@@ -174,6 +132,7 @@ func (s *Server) UnLinkClient(c *Client) {
 		c.Node = nil
 		delete(s.ClientsMap, c.Id)
 		s.StatConnCount--
+		c.Conn.Close()
 		c.Conn = nil
 	}
 	//if c.WithFlags(CLIENT_PENDING_WRITE) {
@@ -189,9 +148,10 @@ func (s *Server) UnLinkClient(c *Client) {
 }
 
 func CloseClient(s *Server, c *Client) {
+	fmt.Println("CloseClient")
+
 	c.QueryBuf = nil
-	c.PendingWriteNode = nil
-	//	TODO unwatch all keys
+	//c.PendingWriteNode = nil
 	c.Reply.ListEmpty()
 	c.Reply = nil
 	c.ResetArgv()
@@ -211,6 +171,7 @@ func CloseClientAsync(s *Server, c *Client) {
 }
 
 func CloseClientsInAsyncList(s *Server) {
+	fmt.Println("CloseClientsInAsyncList")
 	for s.ClientsToClose.ListLength() != 0 {
 		ln := s.ClientsToClose.ListHead()
 		c := ln.Value.(*Client)
@@ -284,7 +245,7 @@ func (s *Server) AddReplyToList(c *Client, str string) {
 		}
 
 	}
-	AsyncCloseClientOnOutputBufferLimitReached(s, c)
+	//AsyncCloseClientOnOutputBufferLimitReached(s, c)
 }
 
 func (s *Server) AddReply(c *Client, str string) {
@@ -418,9 +379,8 @@ func (s *Server) AddReplySubcommandSyntaxError(c *Client) {
 }
 
 // Write data in output buffers to client.
-func WriteToClient(dual *Dual) {
+func WriteToClient(s *Server, c *Client) {
 	written := int64(0)
-	s, c := dual.S, dual.C
 	for c.HasPendingReplies() {
 		if c.BufPos > 0 {
 			n, err := c.Write(c.Buf)
@@ -634,8 +594,7 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 	return C_ERR
 }
 
-func ReadQueryFromClient(dual *Dual) {
-	s, c := dual.S, dual.C
+func ReadQueryFromClient(s *Server, c *Client) {
 	bufLen := int64(PROTO_IOBUF_LEN)
 	queryLen := int64(len(c.QueryBuf))
 	if c.RequestType == PROTO_REQ_MULTIBULK && c.MultiBulkLen != 0 && c.BulkLen != -1 && c.BulkLen >= PROTO_MBULK_BIG_ARG {
@@ -799,8 +758,8 @@ func Call(s *Server, c *Client, flags int64) {
 	//	replicationFeedMonitors(c,server.monitors,c->db->id,c->argv,c->argc);
 	//}
 	c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
-	PrevAlsoPropagate := s.AlsoPropagate
-	s.AlsoPropagate.Init()
+	//PrevAlsoPropagate := s.AlsoPropagate
+	//s.AlsoPropagate.Init()
 
 	dirty := s.Dirty
 	start := time.Now()
@@ -810,25 +769,6 @@ func Call(s *Server, c *Client, flags int64) {
 	if dirty < 0 {
 		dirty = 0
 	}
-	//if s.Loading && c.WithFlags(CLIENT_LUA) {
-	//	flags &= ^(CMD_CALL_SLOWLOG | CMD_CALL_STATS)
-	//}
-
-	///* Log the command into the Slow log if needed, and populate the
-	//* per-command statistics that we show in INFO commandstats. */
-	//if (flags & CMD_CALL_SLOWLOG && c->cmd->proc != execCommand) {
-	//	char *latency_event = (c->cmd->flags & CMD_FAST) ?
-	//	"fast-command" : "command";
-	//	latencyAddSampleIfNeeded(latency_event,duration/1000);
-	//	slowlogPushEntryIfNeeded(c,c->argv,c->argc,duration);
-	//}
-	//if flags&CMD_CALL_SLOWLOG != 0 && !c.Cmd.IsProcess(&ExecCommand) {
-	//	latency_event := "command"
-	//	if c.Cmd.WithFlags(CMD_FAST) {
-	//		latency_event = "fast-command"
-	//	}
-	//
-	//}
 
 	if flags&CMD_CALL_PROPAGATE != 0 {
 		c.LastCmd.Duration = duration
@@ -858,25 +798,25 @@ func Call(s *Server, c *Client, flags int64) {
 	c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
 	c.AddFlags(clientOldFlags | CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
 
-	if s.AlsoPropagate.OpNum != 0 {
-		if flags&CMD_CALL_PROPAGATE != 0 {
-			for j := int64(0); j < s.AlsoPropagate.OpNum; j++ {
-				op := s.AlsoPropagate.Ops[j]
-				target := op.Target
-				if flags&CMD_CALL_PROPAGATE_AOF == 0 {
-					target &= ^PROPAGATE_AOF
-				}
-				if flags&CMD_CALL_PROPAGATE_REPL == 0 {
-					target &= ^PROPAGATE_REPL
-				}
-				if target != 0 {
-					s.Propagate(op.Cmd, op.DbId, op.Argc, op.Argv, target)
-				}
-			}
-		}
-		s.AlsoPropagate.Init()
-	}
-	s.AlsoPropagate = PrevAlsoPropagate
+	//if s.AlsoPropagate.OpNum != 0 {
+	//	if flags&CMD_CALL_PROPAGATE != 0 {
+	//		for j := int64(0); j < s.AlsoPropagate.OpNum; j++ {
+	//			op := s.AlsoPropagate.Ops[j]
+	//			target := op.Target
+	//			if flags&CMD_CALL_PROPAGATE_AOF == 0 {
+	//				target &= ^PROPAGATE_AOF
+	//			}
+	//			if flags&CMD_CALL_PROPAGATE_REPL == 0 {
+	//				target &= ^PROPAGATE_REPL
+	//			}
+	//			if target != 0 {
+	//				s.Propagate(op.Cmd, op.DbId, op.Argc, op.Argv, target)
+	//			}
+	//		}
+	//	}
+	//	s.AlsoPropagate.Init()
+	//}
+	//s.AlsoPropagate = PrevAlsoPropagate
 	s.StatNumCommands++
 }
 
@@ -1071,7 +1011,7 @@ func (s *Server) LookUpCommand(name string) *Command {
 }
 
 func (s *Server) SetProtocolError(err string, c *Client, pos int64) {
-	if s.Verbosity <= LL_VERBOSE {
+	if s.LogLevel <= LL_INFO {
 		//clientStr := c.CatClientInfoString(s)
 		errorStr := fmt.Sprintf("Query buffer during protocol error: '%s'", c.QueryBuf)
 		buf := make([]byte, len(errorStr))
@@ -1102,24 +1042,14 @@ func (s *Server) GetAllClientInfoString(ctype int64) string {
 	return str.String()
 }
 
-func AsyncCloseClientOnOutputBufferLimitReached(s *Server, c *Client) {
-	if c.ReplySize == 0 || c.WithFlags(CLIENT_CLOSE_ASAP) {
-		return
-	}
-	if CheckOutputBufferLimits(s, c) {
-		//clientInfo := CatClientInfoString(s, c)
-		//TODO
-		CloseClient(s, c)
-	}
-}
-
-func ServerCron(s *Server) {
-
-}
-
-func ClientCron(s *Server, c *Client) {
-
-}
+//func AsyncCloseClientOnOutputBufferLimitReached(s *Server, c *Client) {
+//	if c.ReplySize == 0 || c.WithFlags(CLIENT_CLOSE_ASAP) {
+//		return
+//	}
+//	if CheckOutputBufferLimits(s, c) {
+//		CloseClientAsync(s, c)
+//	}
+//}
 
 func DbDeleteSync(s *Server, c *Client, key string) bool {
 	// TODO expire things
@@ -1138,4 +1068,131 @@ func SelectDB(s *Server, c *Client, dbId int64) int64 {
 	}
 	c.Db = s.Dbs[dbId]
 	return C_OK
+}
+
+func ServerCron(s *Server) {
+
+}
+
+func ClientCron(s *Server, c *Client) {
+
+}
+
+func ServerExists() error {
+	if redigoPidFile, err1 := os.Open(os.TempDir() + "//redigo.pid"); err1 == nil {
+		defer redigoPidFile.Close()
+		if pidStr, err2 := ioutil.ReadAll(redigoPidFile); err2 == nil {
+			if pid, err3 := strconv.Atoi(string(pidStr)); err3 == nil {
+				if _, err4 := os.FindProcess(pid); err4 == nil {
+					return errors.New(fmt.Sprintf("Error! Redigo is runing, Pid is %d", pid))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func CreateServer() *Server {
+	if err := ServerExists(); err == nil {
+		pid := os.Getpid()
+		redigoPidFile, _ := os.Open(os.TempDir() + "//redigo.pid")
+		redigoPidFile.WriteString(fmt.Sprintf("%d", pid))
+		redigoPidFile.Close()
+		configPath, _ := filepath.Abs(filepath.Dir(os.Args[0]))
+		s := Server{
+			int64(pid),
+			os.TempDir() + "/redigo.pid",
+			configPath,
+			os.Args[0],
+			os.Args,
+			10,
+			make([]*Db, DEFAULT_DB_NUM),
+			DEFAULT_DB_NUM,
+			make(map[string]*Command),
+			make(map[string]*Command),
+			time.Now(),
+			0,
+			0,
+			0,
+			9988,
+			make([]string, CONFIG_BINDADDR_MAX),
+			0,
+			os.TempDir() + "/redigo.sock",
+			nil,
+			nil,
+			make(map[int64]*Client),
+			nil,
+			//make([]ClientBufferLimitsConfig, CLIENT_TYPE_OBUF_COUNT),
+			0,
+			CONFIG_DEFAULT_MAX_CLIENTS,
+			true,
+			nil,
+			true,
+			CONFIG_DEFAULT_PROTO_MAX_BULK_LEN,
+			false,
+			time.Unix(0, 0),
+			0,
+			nil,
+			0,
+			0,
+			0,
+			0,
+			0,
+			false,
+			sync.RWMutex{},
+			CONFIG_DEFAULT_MAXMEMORY,
+			false,
+			make(chan struct{}, 1),
+			LL_DEBUG,
+		}
+		for i := int64(0); i < s.DbNum; i++ {
+			s.Dbs = append(s.Dbs, CreateDb(i))
+		}
+		s.Clients = ListCreate()
+		s.ClientsToClose = ListCreate()
+		s.BindAddrs = append(s.BindAddrs, "0.0.0.0")
+		s.BindAddrCount++
+		return &s
+	}
+	os.Exit(1)
+	return nil
+}
+
+func StartServer(s *Server) {
+	if s == nil {
+		return
+	}
+	s.ServerLogDebugF("%s\n", "StartServer")
+	for _, addr := range s.BindAddrs {
+		if addr != "" {
+			go TcpServer(s, addr)
+		}
+	}
+	go UnixServer(s)
+}
+
+func StopServer(s *Server) {
+	fmt.Println(s.LogLevel)
+	s.ServerLogDebugF("%s\n", "StopServer")
+	s.CloseCh <- struct{}{}
+	fmt.Println("------>s.CloseCh")
+	CloseClientsInAsyncList(s)
+	fmt.Println("ListLength---->", s.Clients.ListLength())
+	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
+	node := iter.Next
+	fmt.Println(node)
+	for node != nil {
+		CloseClient(s, node.Value.(*Client))
+		node = node.ListNextNode()
+	}
+	fmt.Println("Wait...")
+}
+
+func HandleSignal(s *Server) {
+	c := make(chan os.Signal, 1)
+	fmt.Println("HandleSignal")
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+	fmt.Println("Signale Channel", <-c)
+	s.ServerLogDebugF("%s\n", "HandleSignal, Pass Block")
+	StopServer(s)
 }

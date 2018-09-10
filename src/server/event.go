@@ -4,20 +4,10 @@ import (
 	"net"
 	. "redigo/src/networking"
 	. "redigo/src/constant"
+	"fmt"
 )
 
-type Dual struct {
-	S *Server
-	C *Client
-}
-type Chans struct {
-	ReadCh  chan *Dual
-	WriteCh chan *Dual
-	CloseCh chan *Dual
-	ErrCh   chan string
-}
-
-func UnixServer(s *Server, chs Chans) {
+func UnixServer(s *Server) {
 	listener := AnetListenUnix(s.UnixSocketPath)
 	if listener == nil {
 		return
@@ -28,13 +18,14 @@ func UnixServer(s *Server, chs Chans) {
 			AnetSetErrorFormat("Tcp Accept error: %s", err)
 			continue
 		}
-		CommonServer(s, conn, 0, "")
+		CommonServer(s, conn, CLIENT_UNIX_SOCKET, "")
 
 	}
 }
 
-func TcpServer(s *Server, addr string, flags int64) {
-	listener := AnetListenTcp("tcp", addr, s.Port)
+func TcpServer(s *Server, ip string) {
+	fmt.Println("------>TcpServer")
+	listener := AnetListenTcp("tcp", ip, s.Port)
 	if listener == nil {
 		return
 	}
@@ -44,7 +35,7 @@ func TcpServer(s *Server, addr string, flags int64) {
 			AnetSetErrorFormat("Tcp Accept error: %s", err)
 			continue
 		}
-		CommonServer(s, conn, 0, addr)
+		CommonServer(s, conn, 0, ip)
 	}
 }
 
@@ -79,60 +70,54 @@ NOTE: You only need to do one of the above things in order for the server to sta
 	}
 	c.AddFlags(flags)
 
-	chs := Chans{
-		make(chan *Dual),
-		make(chan *Dual),
-		make(chan *Dual),
-		make(chan string),
-	}
-	dual := &Dual{s, c}
-	chs.ReadCh <- dual
-	go ReadLoop(chs, dual.S.CloseCh)
-	go WriteLoop(chs, dual.S.CloseCh)
-	go CloseLoop(chs, dual.S.CloseCh)
+	c.ReadCh <- struct {}{}
+	go ReadLoop(s, c)
+	go WriteLoop(s, c)
+	go CloseLoop(s, c)
 }
 
-func ReadLoop(chs Chans, sCloseCh chan struct{}) {
-	var dual *Dual
+func ReadLoop(s* Server, c* Client) {
+	fmt.Println("ReadLoop")
 	for {
 		select {
-		case <-chs.CloseCh:
+		case <-c.CloseCh:
+			fmt.Println("ReadLoop ----> Stop Client")
 			return
-		case <-sCloseCh:
-			return
-		case dual = <-chs.ReadCh:
-			ReadQueryFromClient(dual)
-			chs.WriteCh <- dual
+
+		case <-c.ReadCh:
+			ReadQueryFromClient(s, c)
+			c.WriteCh <- struct{}{}
 		}
 	}
 }
 
-func WriteLoop(chs Chans, sCloseCh chan struct{}) {
-	var dual *Dual
+func WriteLoop(s* Server, c* Client) {
+	fmt.Println("WriteLoop")
 	for {
 		select {
-		case <-chs.CloseCh:
+		case <-c.CloseCh:
+			fmt.Println("WriteLoop ----> Stop Client")
 			return
-		case <-sCloseCh:
-			return
-		case dual = <-chs.WriteCh:
-			WriteToClient(dual)
-			chs.CloseCh <- dual
+
+		case <-c.WriteCh:
+			WriteToClient(s, c)
+			c.CloseCh <- struct {}{}
 		}
 	}
 }
 
-func CloseLoop(chs Chans, sCloseCh chan struct{}) {
-	var dual *Dual
+func CloseLoop(s* Server, c* Client) {
+	fmt.Println("CloseLoop")
 	for {
 		select {
-		case sCloseCh:
-			return
-		case dual = <-chs.CloseCh:
-			if dual.C.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
-				CloseClient(dual.S, dual.C)
+		case <-c.CloseCh:
+			if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
+				fmt.Println("CloseLoop ----> Stop Client Sync")
+
+				CloseClient(s, c)
 			} else {
-				CloseClientAsync(dual.S, dual.C)
+				fmt.Println("CloseLoop ----> Stop Client Async")
+				CloseClientAsync(s, c)
 			}
 		}
 	}

@@ -1,4 +1,4 @@
-package object
+package server
 
 import . "redigo/src/constant"
 

@@ -2,7 +2,6 @@ package server
 
 import (
 	. "redigo/src/structure"
-	. "redigo/src/db"
 	. "redigo/src/constant"
 	"net"
 	"time"
@@ -12,40 +11,42 @@ import (
 )
 
 type Client struct {
-	Id                       int64
-	Conn                     net.Conn
-	Db                       *Db
-	Name                     string
-	QueryBuf                 []byte // buffer use to accumulate client query
-	QueryBufPeak             int64
-	Argc                     int64    // count of arguments
-	Argv                     []string // arguments of current command
-	Cmd                      *Command
-	LastCmd                  *Command
-	Reply                    *List
-	ReplySize                int64
-	//SentSize                 int64 // Amount of bytes already sent in the current buffer or object being sent.
-	CreateTime               time.Duration
-	LastInteraction          time.Duration
-	Buf                      []byte
-	BufPos                   int64
-	SentLen                  int64
-	Flags                    int64
-	Node                     *ListNode
-	PendingWriteNode         *ListNode
-	UnblockedNode            *ListNode
-	PeerId                   string
-	ObufSoftLimitReachedTime time.Duration
-	RequestType              int64 // Request protocol type: PROTO_REQ_*
-	MultiBulkLen             int64 // Number of multi bulk arguments left to read.
-	BulkLen                  int64 // Length of bulk argument in multi bulk request.
-	ReplyOff                 int64
-	ReplyAckOff              int64
-	ReplyAckTime             time.Duration
-	ReadReplyOff             int64
-	BType                    int64
-	Authenticated            int64
-	WOff                     int64 // Last write global replication offset.
+	Id              int64
+	Conn            net.Conn
+	Db              *Db
+	Name            string
+	QueryBuf        []byte // buffer use to accumulate client query
+	QueryBufPeak    int64
+	Argc            int64    // count of arguments
+	Argv            []string // arguments of current command
+	Cmd             *Command
+	LastCmd         *Command
+	Reply           *List
+	ReplySize       int64
+	CreateTime      time.Time
+	LastInteraction time.Time
+	Buf             []byte
+	BufPos          int64
+	SentLen         int64
+	Flags           int64
+	Node            *ListNode
+	PeerId          string
+	RequestType     int64 // Request protocol type: PROTO_REQ_*
+	MultiBulkLen    int64 // Number of multi bulk arguments left to read.
+	BulkLen         int64 // Length of bulk argument in multi bulk request.
+	Authenticated   int64
+	ReadCh          chan struct{}
+	WriteCh         chan struct{}
+	CloseCh         chan struct{}
+	//UnblockedNode    *ListNode
+	//PendingWriteNode *ListNode
+	//ReplyOff                 int64
+	//ReplyAckOff              int64
+	//ObufSoftLimitReachedTime time.Time
+	//ReplyAckTime             time.Time
+	//ReadReplyOff             int64
+	//BType                    int64
+	//WOff                     int64 // Last write global replication offset.
 }
 
 func (c *Client) WithFlags(flags int64) bool {
@@ -59,8 +60,6 @@ func (c *Client) AddFlags(flags int64) {
 func (c *Client) DeleteFlags(flags int64) {
 	c.Flags &= ^flags
 }
-
-
 
 func (c *Client) GeneratePeerId(s *Server) {
 	if c.WithFlags(CLIENT_UNIX_SOCKET) {
@@ -88,8 +87,6 @@ func (c *Client) HasPendingReplies() bool {
 	return c.BufPos != 0 || c.Reply.ListLength() != 0
 }
 
-
-
 func (c *Client) Write(b []byte) (int64, error) {
 	n, err := c.Conn.Write(b)
 	return int64(n), err
@@ -99,7 +96,6 @@ func (c *Client) Read(b []byte) (int64, error) {
 	n, err := c.Conn.Read(b)
 	return int64(n), err
 }
-
 
 func (c *Client) GetClientType() int64 {
 	if c.WithFlags(CLIENT_MASTER) {
@@ -150,7 +146,6 @@ func (c *Client) GetOutputBufferMemoryUsage() int64 {
 	return c.ReplySize + c.Reply.ListLength()*listNodeSize + listSize
 }
 
-
 // resetClient prepare the client to process the next command
 func (c *Client) Reset() {
 	//var prevCmd CommandProcess = nil
@@ -196,36 +191,35 @@ func CopyClientOutputBuffer(dst *Client, src *Client) {
 	dst.ReplySize = src.ReplySize
 }
 
-
-func CheckOutputBufferLimits(s *Server, c *Client) bool {
-	usedMem := c.GetOutputBufferMemoryUsage()
-	ctype := c.GetClientType()
-	hard := false
-	soft := false
-	if ctype == CLIENT_TYPE_MASTER {
-		ctype = CLIENT_TYPE_NORMAL
-	}
-	if s.ClientObufLimits[ctype].HardLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].HardLimitBytes {
-		hard = true
-	}
-	if s.ClientObufLimits[ctype].SoftLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].SoftLimitBytes {
-		soft = true
-	}
-	if soft == true {
-		if c.ObufSoftLimitReachedTime == 0 {
-			c.ObufSoftLimitReachedTime = s.UnixTime
-			soft = false /* First time we see the soft limit reached */
-		} else {
-			elapsed := s.UnixTime - c.ObufSoftLimitReachedTime
-			if elapsed <= s.ClientObufLimits[ctype].SoftLimitTime {
-				soft = false
-			}
-		}
-	} else {
-		c.ObufSoftLimitReachedTime = 0
-	}
-	return soft || hard
-}
+//func CheckOutputBufferLimits(s *Server, c *Client) bool {
+//	usedMem := c.GetOutputBufferMemoryUsage()
+//	ctype := c.GetClientType()
+//	hard := false
+//	soft := false
+//	if ctype == CLIENT_TYPE_MASTER {
+//		ctype = CLIENT_TYPE_NORMAL
+//	}
+//	if s.ClientObufLimits[ctype].HardLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].HardLimitBytes {
+//		hard = true
+//	}
+//	if s.ClientObufLimits[ctype].SoftLimitBytes > 0 && usedMem >= s.ClientObufLimits[ctype].SoftLimitBytes {
+//		soft = true
+//	}
+//	if soft == true {
+//		if c.ObufSoftLimitReachedTime == time.Unix(0, 0) {
+//			c.ObufSoftLimitReachedTime = s.UnixTime
+//			soft = false /* First time we see the soft limit reached */
+//		} else {
+//			elapsed := s.UnixTime.Sub(c.ObufSoftLimitReachedTime)
+//			if elapsed <= s.ClientObufLimits[ctype].SoftLimitTimeDuration {
+//				soft = false
+//			}
+//		}
+//	} else {
+//		c.ObufSoftLimitReachedTime = time.Unix(0, 0)
+//	}
+//	return soft || hard
+//}
 
 func CatClientInfoString(s *Server, c *Client) string {
 	flags := bytes.Buffer{}
@@ -280,6 +274,6 @@ func CatClientInfoString(s *Server, c *Client) string {
 	}
 
 	clientFmt := "id=%d addr=%s conn=%s name=%s age=%d idle=%d flags=%s db=%d cmd=%s"
-	return fmt.Sprintf(clientFmt, c.Id, c.GetPeerId(s), c.Conn.LocalAddr().String(), c.Name, (s.UnixTime - c.CreateTime).Nanoseconds()/1000,
-		(s.UnixTime - c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.Id, cmd)
+	return fmt.Sprintf(clientFmt, c.Id, c.GetPeerId(s), c.Conn.LocalAddr().String(), c.Name, s.UnixTime.Sub(c.CreateTime).Nanoseconds()/1000,
+		s.UnixTime.Sub(c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.Id, cmd)
 }
