@@ -29,8 +29,8 @@ type Server struct {
 	DbNum                int64
 	Commands             map[string]*Command
 	OrigCommands         map[string]*Command
-	UnixTime             time.Time // UnixTime in millisecond
-	LruClock             int64     // Clock for LRU eviction
+	UnixTime             time.Time // UnixTime in nanosecond
+	LruClock             time.Time // Clock for LRU eviction
 	CronLoops            int64
 	NextClientId         int64
 	Port                 int64 // TCP listening port
@@ -62,20 +62,27 @@ type Server struct {
 	Loading              bool
 	CloseCh              chan struct{}
 	LogLevel             int64
+	MaxIdleTime          time.Duration
 }
 
-func LRUClock(s *Server) int64 {
+func LruClock(s *Server) time.Time {
 	if 1000/s.Hz <= LRU_CLOCK_RESOLUTION {
-		// server.Hz >= 1, serverCron will update LRU, save resources
+		// s.Hz >= 1, serverCron will update LRU, save resources
+		// s.Hz default is 10
 		return s.LruClock
 	} else {
-		return SimpleGetLRUClock()
+		return GetLruClock()
 	}
 }
 
-func SimpleGetLRUClock() int64 {
-	mstime := time.Now().UnixNano() / 1000
-	return mstime / LRU_CLOCK_RESOLUTION & LRU_CLOCK_MAX
+//
+//func GetLruClock() time.Time {
+//  //int version time, speed should compared with time.Time
+//	mstime := time.Now().UnixNano() / 1000
+//	return mstime / LRU_CLOCK_RESOLUTION & LRU_CLOCK_MAX
+//}
+func GetLruClock() time.Time {
+	return time.Now()
 }
 
 func CreateClient(s *Server, conn net.Conn) *Client {
@@ -112,6 +119,7 @@ func CreateClient(s *Server, conn net.Conn) *Client {
 		ReadCh:          make(chan struct{}, 1),
 		WriteCh:         make(chan struct{}, 1),
 		CloseCh:         make(chan struct{}, 1),
+		mutex:           sync.RWMutex{},
 	}
 	c.GetNextClientId(s)
 	SelectDB(s, &c, 0)
@@ -295,7 +303,7 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 		newline := bytes.IndexByte(c.QueryBuf, '\r')
 		if newline < 0 {
 			if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
-				AddReplyError(s,c, "Protocol error: too big multibulk count request")
+				AddReplyError(s, c, "Protocol error: too big multibulk count request")
 				SetProtocolError(s, c, "too big multibulk request", 0)
 			}
 			return C_ERR
@@ -637,10 +645,10 @@ func SetProtocolError(s *Server, c *Client, err string, pos int64) {
 
 func GetAllClientInfoString(s *Server, ctype int64) string {
 	str := bytes.Buffer{}
-	listIter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
-	ln := listIter.ListNext()
-	for ln != nil {
-		c := ln.Value.(*Client)
+
+	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
+	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
+		c := node.Value.(*Client)
 		if ctype != -1 && c.GetClientType() != ctype {
 			continue
 		}
@@ -670,15 +678,73 @@ func SelectDB(s *Server, c *Client, dbId int64) int64 {
 	return C_OK
 }
 
-func CreateShared(s *Server) {
+func UpdateCachedTime(s *Server) {
+	s.mutex.Lock()
+	s.UnixTime = time.Now()
+	s.mutex.Unlock()
+}
 
+func UpdateLRUClock(s *Server) {
+	s.mutex.Lock()
+	s.LruClock = time.Now()
+	s.mutex.Unlock()
 }
 
 func ServerCron(s *Server) {
-
+	for {
+		select {
+		case <-s.CloseCh:
+			return
+		default:
+			s.ServerLogDebugF("-->%v, Loop: %d\n", "ServerCron", s.CronLoops)
+			UpdateCachedTime(s)
+			UpdateLRUClock(s)
+			ClientCron(s)
+			DbsCron(s)
+			CloseClientsInAsyncList(s)
+			s.CronLoops++
+			time.Sleep(100 *time.Millisecond)
+		}
+	}
 }
 
-func ClientCron(s *Server, c *Client) {
+func ClientCronHandler(s *Server, c *Client, wg sync.WaitGroup) {
+	// Client Time Out
+	wg.Add(1)
+	c.mutex.Lock()
+	if s.MaxIdleTime != 0*time.Millisecond && time.Since(c.LastInteraction) > s.MaxIdleTime {
+		// time out, no interaction time longer than the idle time for client
+		CloseClient(s, c)
+	}
+
+	// Client Resize QueryBuf
+	idleTime := s.UnixTime.Sub(c.LastInteraction)
+	queryBufSize := int64(len(c.QueryBuf) + cap(c.QueryBuf))
+	/* There are two conditions to resize the query buffer:
+ * 1) Query buffer is > BIG_ARG and too big for latest peak.
+ * 2) Query buffer is > BIG_ARG and client is idle. */
+	if queryBufSize > PROTO_MBULK_BIG_ARG && ((queryBufSize/c.QueryBufPeak+1) > 2 || idleTime > 2 * time.Millisecond) {
+		if cap(c.QueryBuf) > 1024 * 4 {
+			newSlice := make([]byte, len(c.QueryBuf))
+			copy(newSlice, c.QueryBuf)
+			c.QueryBuf = newSlice
+		}
+	}
+	c.QueryBufPeak = 0
+	c.mutex.Unlock()
+	wg.Done()
+}
+func ClientCron(s *Server) {
+	wg := sync.WaitGroup{}
+	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
+	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
+		c := node.Value.(*Client)
+		go ClientCronHandler(s, c, wg)
+	}
+	wg.Wait()
+}
+
+func DbsCron(s *Server) {
 
 }
 
@@ -700,7 +766,6 @@ func ServerExists() (int, error) {
 
 func CreateServer() *Server {
 	fmt.Printf("-->%s\n", "CreateServer")
-
 	pidFile := os.TempDir() + "redigo.pid"
 	unixSocketPath := os.TempDir() + "redigo.sock"
 	if pid, err1 := ServerExists(); err1 == nil {
@@ -711,6 +776,7 @@ func CreateServer() *Server {
 		}
 
 		configPath, _ := filepath.Abs(filepath.Dir(os.Args[0]))
+		nowTime := time.Now()
 		s := Server{
 			int64(pid),
 			pidFile,
@@ -722,8 +788,8 @@ func CreateServer() *Server {
 			DEFAULT_DB_NUM,
 			make(map[string]*Command),
 			make(map[string]*Command),
-			time.Now(),
-			0,
+			nowTime,
+			nowTime,
 			0,
 			0,
 			9988,
@@ -756,6 +822,7 @@ func CreateServer() *Server {
 			false,
 			make(chan struct{}, 1),
 			LL_DEBUG,
+			0 * time.Millisecond,
 		}
 		for i := int64(0); i < s.DbNum; i++ {
 			s.Dbs = append(s.Dbs, CreateDb(i))
@@ -764,6 +831,7 @@ func CreateServer() *Server {
 		s.ClientsToClose = ListCreate()
 		s.BindAddrs = append(s.BindAddrs, "0.0.0.0")
 		s.BindAddrCount++
+		CreateShared(&s)
 		return &s
 	} else {
 		fmt.Println(err1)
@@ -783,6 +851,7 @@ func StartServer(s *Server) {
 		}
 	}
 	go UnixServer(s)
+	go ServerCron(s)
 }
 
 func CloseServer(s *Server) {
@@ -791,11 +860,8 @@ func CloseServer(s *Server) {
 
 	// clear clients
 	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
-	node := iter.Next
-	fmt.Println("node: ", node)
-	for node != nil {
+	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
 		CloseClient(s, node.Value.(*Client))
-		node = node.ListNextNode()
 	}
 
 	//notify server is closed

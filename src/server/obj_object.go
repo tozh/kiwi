@@ -3,12 +3,13 @@ package server
 import (
 	. "redigo/src/constant"
 	. "redigo/src/structure"
+	"time"
 )
 
 type Object struct {
 	RType    int64
 	Encoding int64
-	Lru      int64
+	Lru      time.Time
 	//RefConut int64
 }
 
@@ -44,8 +45,8 @@ type Objector interface {
 	getEncode() int64
 	setEncode(encode int64)
 	getEncodeInString() string
-	getLRU() int64
-	setLRU(lru int64)
+	getLRU() time.Time
+	setLRU(lru time.Time)
 	//getRefCount() int64
 	//setRefCount(refCount int64)
 	//IncrRefCount() int64
@@ -109,11 +110,11 @@ func (o *Object) setEncode(encode int64) {
 	o.Encoding = encode
 }
 
-func (o *Object) getLRU() int64 {
+func (o *Object) getLRU() time.Time {
 	return o.Lru
 }
 
-func (o *Object) setLRU(lru int64) {
+func (o *Object) setLRU(lru time.Time) {
 	o.Lru = lru
 }
 
@@ -145,15 +146,15 @@ func (o *Object) setLRU(lru int64) {
 //}
 
 func (o *Object) RefreshLRUClock(s *Server) {
-	o.Lru = LRUClock(s)
+	o.Lru = LruClock(s)
 }
 
 /* functions for Objects */
-func createObject(s *Server, rtype int64, encoding int64, ) Object {
+func CreateObject(s *Server, rtype int64, encoding int64) Object {
 	obj := Object{
 		RType:    rtype,
 		Encoding: encoding,
-		Lru:      LRUClock(s),
+		Lru:      LruClock(s),
 		//RefConut: 1,
 	}
 	return obj

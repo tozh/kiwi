@@ -163,9 +163,7 @@ func (list *List) ListDelNode(node *ListNode) {
  * NULL is returned. */
 func (list *List) ListSearchKey(key interface{}) *ListNode {
 	iter := list.ListGetIterator(ITERATION_DIRECTION_INORDER)
-	node := iter.ListNext()
-
-	for node != nil {
+	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
 		if list.Match != nil {
 			if list.Match(node.Value, key) {
 				return node
@@ -175,7 +173,6 @@ func (list *List) ListSearchKey(key interface{}) *ListNode {
 				return node
 			}
 		}
-		node = iter.ListNext()
 	}
 	return nil
 }
@@ -260,11 +257,9 @@ func ListDup(list *List) *List {
 	}
 	cp.Match = list.Match
 	iter := list.ListGetIterator(ITERATION_DIRECTION_INORDER)
-	node := iter.ListNext()
-	for node != nil {
+	for node := iter.ListNext(); node != nil; node=iter.ListNext() {
 		value := node.Value
 		cp.ListAddNodeTail(value)
-		node = iter.ListNext()
 	}
 	return cp
 }

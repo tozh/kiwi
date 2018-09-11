@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"unsafe"
 	"bytes"
+	"sync"
 )
 
 type Client struct {
@@ -38,6 +39,7 @@ type Client struct {
 	ReadCh          chan struct{}
 	WriteCh         chan struct{}
 	CloseCh         chan struct{}
+	mutex           sync.RWMutex
 }
 
 func (c *Client) WithFlags(flags int64) bool {

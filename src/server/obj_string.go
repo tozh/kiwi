@@ -48,7 +48,7 @@ func GetStrObjectValueString(o *StrObject) (string, error) {
 }
 
 func CreateStrObjectByStr(s *Server, str string) *StrObject {
-	obj := createObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_STR)
+	obj := CreateObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_STR)
 	o := StrObject{
 		Object: obj,
 		Value:  &str,
@@ -62,7 +62,7 @@ func CreateStrObjectByInt(s *Server, i int64) *StrObject {
 		//o.IncrRefCount()
 		return o
 	}
-	obj := createObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_INT)
+	obj := CreateObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_INT)
 	o := StrObject{
 		Object: obj,
 		Value:  &i,
