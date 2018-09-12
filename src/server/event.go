@@ -5,37 +5,74 @@ import (
 	. "redigo/src/networking"
 	. "redigo/src/constant"
 	"fmt"
+	"time"
 )
 
+type accepted struct {
+	conn net.Conn
+	err  error
+}
+
 func UnixServer(s *Server) {
+	fmt.Println("------>UnixServer")
+	s.wg.Add(1)
+	defer s.wg.Done()
 	listener := AnetListenUnix(s.UnixSocketPath)
 	if listener == nil {
 		return
 	}
 	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			AnetSetErrorFormat("Tcp Accept error: %s", err)
-			continue
+		ch := make(chan accepted, 1)
+		go func() {
+			conn, err := listener.Accept()
+			ch <- accepted{conn, err}
+		}()
+		select {
+		case <-s.CloseCh:
+			s.ServerLogDebugF("-->%v\n", "UnixServer ------ SHUTDOWN")
+			listener.Close()
+			return
+		case acc := <-ch:
+			if acc.err != nil {
+				s.ServerLogDebugF("-->%v\n", "UnixServer ------ Accept Error")
+				AnetSetErrorFormat("Unix Accept error: %s", acc.err)
+				continue
+			}
+			s.ServerLogDebugF("-->%v\n", "UnixServer ------ CommonServer")
+			CommonServer(s, acc.conn, CLIENT_UNIX_SOCKET, "")
 		}
-		CommonServer(s, conn, CLIENT_UNIX_SOCKET, "")
-
 	}
 }
 
 func TcpServer(s *Server, ip string) {
 	fmt.Println("------>TcpServer")
+	s.wg.Add(1)
+	defer s.wg.Done()
 	listener := AnetListenTcp("tcp", ip, s.Port)
 	if listener == nil {
 		return
 	}
+
 	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			AnetSetErrorFormat("Tcp Accept error: %s", err)
-			continue
+		ch := make(chan accepted, 1)
+		go func() {
+			conn, err := listener.Accept()
+			ch <- accepted{conn, err}
+		}()
+		select {
+		case <-s.CloseCh:
+			s.ServerLogDebugF("-->%v\n", "TcpServer ------ SHUTDOWN")
+			listener.Close()
+			return
+		case acc := <-ch:
+			if acc.err != nil {
+				s.ServerLogDebugF("-->%v\n", "TcpServer ------ Accept Error")
+				AnetSetErrorFormat("Tcp Accept error: %s", acc.err)
+				continue
+			}
+			s.ServerLogDebugF("-->%v\n", "TcpServer ------ CommonServer")
+			CommonServer(s, acc.conn, 0, ip)
 		}
-		CommonServer(s, conn, 0, ip)
 	}
 }
 
@@ -59,55 +96,50 @@ connections are only accepted from the loopback interface.
 
 If you want to connect from external computers to Redis you may adopt one of the following solutions: 
 
-1) Just disable protected mode sending the command 'CONFIG SET protected-mode no' from the loopback interface by connecting to Redis from the same host the server is running, however MAKE SURE Redis is not publicly accessible from internet if you do so. Use CONFIG REWRITE to make this change permanent.
-2) Alternatively you can just disable the protected mode by editing the Redis configuration file, and setting the protectedmode option to 'no', and then restarting the server.
-3) If you started the server manually just for testing, restart it with the '--protected-mode no' option.
+1) Just disable protected mode sending the command 'CONFIG SET protected-mode no' from the loopback interface by connecting to Redis from the same host the test_server is running, however MAKE SURE Redis is not publicly accessible from internet if you do so. Use CONFIG REWRITE to make this change permanent.
+2) Alternatively you can just disable the protected mode by editing the Redis configuration file, and setting the protectedmode option to 'no', and then restarting the test_server.
+3) If you started the test_server manually just for testing, restart it with the '--protected-mode no' option.
 4) Setup a bind address or an authentication password. 
 
-NOTE: You only need to do one of the above things in order for the server to start accepting connections from the outside.\r\n`)
+NOTE: You only need to do one of the above things in order for the test_server to start accepting connections from the outside.\r\n`)
 		conn.Write(err)
 		s.StatRejectedConn++
 	}
 	c.AddFlags(flags)
 
-	c.ReadCh <- struct {}{}
 	go ReadLoop(s, c)
-	go WriteLoop(s, c)
 	go CloseLoop(s, c)
 }
 
+
 func ReadLoop(s* Server, c* Client) {
 	fmt.Println("ReadLoop")
+	s.wg.Add(1)
+	defer s.wg.Done()
 	for {
 		select {
+		case <-s.CloseCh:
+			fmt.Println("ReadLoop ----> Stop Server")
+			return
 		case <-c.CloseCh:
 			fmt.Println("ReadLoop ----> Stop Client")
 			return
-
-		case <-c.ReadCh:
-			ReadQueryFromClient(s, c)
-			c.WriteCh <- struct{}{}
-		}
-	}
-}
-
-func WriteLoop(s* Server, c* Client) {
-	fmt.Println("WriteLoop")
-	for {
-		select {
-		case <-c.CloseCh:
-			fmt.Println("WriteLoop ----> Stop Client")
-			return
-
-		case <-c.WriteCh:
+		default:
+			c.HeartBeatCh = make(chan struct{}, 1)
+			go HeartBeating(s, c)
+			ReadFromClient(s, c)
 			WriteToClient(s, c)
-			c.CloseCh <- struct {}{}
 		}
 	}
 }
+
+
+
 
 func CloseLoop(s* Server, c* Client) {
 	fmt.Println("CloseLoop")
+	s.wg.Add(1)
+	defer s.wg.Done()
 	for {
 		select {
 		case <-c.CloseCh:
@@ -118,11 +150,24 @@ func CloseLoop(s* Server, c* Client) {
 				fmt.Println("CloseLoop ----> Stop Client Async")
 				CloseClientAsync(s, c)
 			}
+			return
 		}
 	}
 }
 
-func TimeCron() {
-
+func HeartBeating(s *Server, c *Client) {
+	fmt.Println("HeartBeatLoop")
+	s.wg.Add(1)
+	defer s.wg.Done()
+	select {
+	case <-c.CloseCh:
+		fmt.Println("HeartBeating ----> Stop Client")
+		return
+	case <-c.HeartBeatCh:
+		fmt.Println("HearBeat OK")
+		return
+	case<-time.After(time.Second*3):
+		fmt.Println("HearBeatFail, 3s reached!!!")
+		close(c.CloseCh)
+	}
 }
-

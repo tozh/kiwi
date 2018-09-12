@@ -17,6 +17,7 @@ type Client struct {
 	Db              *Db
 	Name            string
 	QueryBuf        []byte // buffer use to accumulate client query
+	QueryBufSize	int64
 	QueryBufPeak    int64
 	Argc            int64    // count of arguments
 	Argv            []string // arguments of current command
@@ -36,10 +37,17 @@ type Client struct {
 	MultiBulkLen    int64 // Number of multi bulk arguments left to read.
 	BulkLen         int64 // Length of bulk argument in multi bulk request.
 	Authenticated   int64
-	ReadCh          chan struct{}
-	WriteCh         chan struct{}
 	CloseCh         chan struct{}
+	HeartBeatCh     chan struct{}
 	mutex           sync.RWMutex
+}
+
+func (c *Client) GetLastInteraction() time.Time {
+	return c.LastInteraction
+}
+
+func (c *Client) SetLastInteraction(time time.Time) {
+	c.LastInteraction = time
 }
 
 func (c *Client) WithFlags(flags int64) bool {
@@ -71,9 +79,9 @@ func (c *Client) GetPeerId(s *Server) string {
 
 func (c *Client) GetNextClientId(s *Server) {
 	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	c.Id = s.NextClientId
 	s.NextClientId++
-	s.mutex.Unlock()
 }
 
 func (c *Client) HasPendingReplies() bool {
@@ -172,7 +180,7 @@ func (c *Client) PrepareClientToWrite() int64 {
 // functions for client
 func CopyClientOutputBuffer(dst *Client, src *Client) {
 	dst.Reply.ListEmpty()
-	dst.Reply = ListDup(src.Reply)
+	dst.Reply = DupList(src.Reply)
 	copy(dst.Buf, src.Buf[0:src.BufPos])
 	dst.BufPos = src.BufPos
 	dst.ReplySize = src.ReplySize

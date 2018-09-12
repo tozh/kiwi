@@ -35,12 +35,12 @@ type Server struct {
 	NextClientId         int64
 	Port                 int64 // TCP listening port
 	BindAddrs            []string
-	BindAddrCount        int64  // Number of addresses in server.bindaddr[]
+	BindAddrCount        int64  // Number of addresses in test_server.bindaddr[]
 	UnixSocketPath       string // UNIX socket path
 	CurrentClient        *Client
-	Clients              *List // List of active clients
+	Clients              *SyncList // List of active clients
 	ClientsMap           map[int64]*Client
-	ClientsToClose       *List // Clients to close asynchronously
+	ClientsToClose       *SyncList // Clients to close asynchronously
 	ClientMaxQueryBufLen int64
 	MaxClients           int64
 	ProtectedMode        bool // Don't accept external connections.
@@ -63,6 +63,7 @@ type Server struct {
 	CloseCh              chan struct{}
 	LogLevel             int64
 	MaxIdleTime          time.Duration
+	wg                   sync.WaitGroup
 }
 
 func LruClock(s *Server) time.Time {
@@ -97,12 +98,13 @@ func CreateClient(s *Server, conn net.Conn) *Client {
 		Conn:            conn,
 		Name:            "",
 		QueryBuf:        make([]byte, PROTO_INLINE_MAX_SIZE),
+		QueryBufSize:    0,
 		QueryBufPeak:    0,
 		Argc:            0,                 // count of arguments
 		Argv:            make([]string, 0), // arguments of current command
 		Cmd:             nil,
 		LastCmd:         nil,
-		Reply:           ListCreate(),
+		Reply:           CreateList(),
 		ReplySize:       0,
 		CreateTime:      createTime,
 		LastInteraction: createTime,
@@ -116,9 +118,8 @@ func CreateClient(s *Server, conn net.Conn) *Client {
 		MultiBulkLen:    0,
 		BulkLen:         0,
 		Authenticated:   0,
-		ReadCh:          make(chan struct{}, 1),
-		WriteCh:         make(chan struct{}, 1),
 		CloseCh:         make(chan struct{}, 1),
+		HeartBeatCh:     make(chan struct{}, 1),
 		mutex:           sync.RWMutex{},
 	}
 	c.GetNextClientId(s)
@@ -150,6 +151,11 @@ func UnLinkClient(s *Server, c *Client) {
 
 func CloseClient(s *Server, c *Client) {
 	fmt.Println("CloseClient")
+	if c.WithFlags(CLIENT_CLOSING) {
+		return
+	} else {
+		c.AddFlags(CLIENT_CLOSING)
+	}
 	c.QueryBuf = nil
 	c.Reply.ListEmpty()
 	c.Reply = nil
@@ -160,8 +166,6 @@ func CloseClient(s *Server, c *Client) {
 		s.ClientsToClose.ListDelNode(ln)
 	}
 	close(c.CloseCh)
-	close(c.ReadCh)
-	close(c.WriteCh)
 }
 
 func CloseClientAsync(s *Server, c *Client) {
@@ -173,8 +177,7 @@ func CloseClientAsync(s *Server, c *Client) {
 }
 
 func CloseClientsInAsyncList(s *Server) {
-	s.ServerLogDebugF("-->%v\n", "CloseClientsInAsyncList")
-
+	//s.ServerLogDebugF("-->%v\n", "CloseClientsInAsyncList")
 	for s.ClientsToClose.ListLength() != 0 {
 		ln := s.ClientsToClose.ListHead()
 		c := ln.Value.(*Client)
@@ -234,7 +237,7 @@ func WriteToClient(s *Server, c *Client) {
 	}
 	s.StatNetOutputBytes += written
 	if written > 0 {
-		c.LastInteraction = s.UnixTime
+		c.SetLastInteraction(s.UnixTime)
 	}
 	if !c.HasPendingReplies() {
 		c.SentLen = 0
@@ -250,16 +253,16 @@ func WriteToClient(s *Server, c *Client) {
  * with the error and close the connection. */
 func ProcessInlineBuffer(s *Server, c *Client) int64 {
 	// Search for end of line
-	newline := bytes.IndexByte(c.QueryBuf, '\n')
+	newline := IndexOfBytes(c.QueryBuf, 0, int(c.QueryBufSize),'\n')
 
 	if newline == -1 {
-		if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
+		if c.QueryBufSize > PROTO_INLINE_MAX_SIZE {
 			AddReplyError(s, c, "Protocol error: too big inline request")
 			SetProtocolError(s, c, "too big inline request", 0)
 		}
 		return C_ERR
 	}
-	if newline != 0 && newline != len(c.QueryBuf) && c.QueryBuf[newline-1] == '\r' {
+	if newline != 0 && newline != int(c.QueryBufSize) && c.QueryBuf[newline-1] == '\r' {
 		// Handle the \r\n case.
 		newline--
 	}
@@ -272,7 +275,7 @@ func ProcessInlineBuffer(s *Server, c *Client) int64 {
 	}
 
 	// Leave data after the first line of the query in the buffer
-	c.QueryBuf = c.QueryBuf[newline+2:]
+	//c.QueryBuf = c.QueryBuf[newline+2:]
 	if len(argvs) != 0 {
 		c.Argc = 0
 		c.Argv = make([]string, len(argvs))
@@ -299,16 +302,19 @@ func ProcessInlineBuffer(s *Server, c *Client) int64 {
  * to be '*'. Otherwise for inline commands processInlineBuffer() is called. */
 func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 	pos := 0
+	if c.Argc != 0 {
+		panic("c.Argc != 0")
+	}
 	if c.MultiBulkLen == 0 {
-		newline := bytes.IndexByte(c.QueryBuf, '\r')
+		newline := IndexOfBytes(c.QueryBuf, 0, int(c.QueryBufSize),'\r')
 		if newline < 0 {
-			if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
+			if c.QueryBufSize > PROTO_INLINE_MAX_SIZE {
 				AddReplyError(s, c, "Protocol error: too big multibulk count request")
 				SetProtocolError(s, c, "too big multibulk request", 0)
 			}
 			return C_ERR
 		}
-		if len(c.QueryBuf)-newline < 2 {
+		if c.QueryBufSize - int64(newline) < 2 {
 			// end with \r\n, so \r cannot be the last char
 			return C_ERR
 		}
@@ -324,7 +330,7 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 		// pos start of bulks
 		pos = newline + 2
 		if nulkNum <= 0 {
-			c.QueryBuf = c.QueryBuf[pos:]
+			// null multibulk
 			return C_OK
 		}
 		c.MultiBulkLen = int64(nulkNum)
@@ -336,16 +342,16 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 	for c.MultiBulkLen > 0 {
 		if c.BulkLen == -1 {
 			// Read bulk length if unknown
-			newline := bytes.IndexByte(c.QueryBuf, '\r')
+			newline := IndexOfBytes(c.QueryBuf, pos, int(c.QueryBufSize), '\r')
 			if newline < 0 {
-				if len(c.QueryBuf) > PROTO_INLINE_MAX_SIZE {
+				if c.QueryBufSize > PROTO_INLINE_MAX_SIZE {
 					AddReplyError(s, c, "Protocol error: too big bulk count string")
 					SetProtocolError(s, c, "too big bulk count string", 0)
 					return C_ERR
 				}
 				break
 			}
-			if len(c.QueryBuf)-newline < 2 {
+			if c.QueryBufSize - int64(newline) < 2 {
 				// end with \r\n, so \r cannot be the last char
 				break
 			}
@@ -361,39 +367,40 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 				return C_ERR
 			}
 			pos = newline + 2
-			if nulkNum >= PROTO_MBULK_BIG_ARG {
-				/* If we are going to read a large object from network
-				 * try to make it likely that it will start at c->querybuf
-				 * boundary so that we can optimize object creation
-				 * avoiding a large copy of data. */
-				c.QueryBuf = c.QueryBuf[pos:]
-				qblen := len(c.QueryBuf)
-				pos = 0
-				if qblen < nulkNum+2 {
-					//	the only bulk
-					c.QueryBuf = append(c.QueryBuf, make([]byte, nulkNum+2-qblen)...)
-				}
-				c.BulkLen = int64(nulkNum)
-			}
-			if int64(len(c.QueryBuf)-pos) < c.BulkLen+2 {
+			// TODO Do not consider too long input
+			//if nulkNum >= PROTO_MBULK_BIG_ARG {
+			//	/* If we are going to read a large object from network
+			//	 * try to make it likely that it will start at c->querybuf
+			//	 * boundary so that we can optimize object creation
+			//	 * avoiding a large copy of data. */
+			//	c.QueryBuf = c.QueryBuf[pos:]
+			//	c.QueryBufSize = c.QueryBufSize-int64(pos)
+			//	pos = 0
+			//	if int(c.QueryBufSize) < nulkNum+2 {
+			//		//	the only bulk
+			//		c.QueryBuf = append(c.QueryBuf, make([]byte, nulkNum+2-int(c.QueryBufSize))...)
+			//	}
+			//	c.BulkLen = int64(nulkNum)
+			//}
+			if c.QueryBufSize-int64(pos) < c.BulkLen+2 {
 				break
 			} else {
-				if pos == 0 && c.BulkLen >= PROTO_MBULK_BIG_ARG && int64(len(c.QueryBuf)) == c.BulkLen+2 {
-					c.Argv = append(c.Argv, string(c.QueryBuf[pos:c.BulkLen]))
-					c.Argc++
-				} else {
-					c.Argv = append(c.Argv, string(c.QueryBuf[pos:c.BulkLen]))
-					pos += int(c.BulkLen + 2)
-				}
+				// TODO Do not consider too long input
+				//if pos == 0 && c.BulkLen >= PROTO_MBULK_BIG_ARG && c.QueryBufSize == c.BulkLen+2 {
+				//	c.Argv = append(c.Argv, string(c.QueryBuf[pos:c.BulkLen]))
+				//	c.Argc++
+				//} else {
+				//	c.Argv = append(c.Argv, string(c.QueryBuf[pos:c.BulkLen]))
+				//	c.Argc++
+				//	pos += int(c.BulkLen + 2)
+				//}
+				c.Argv = append(c.Argv, string(c.QueryBuf[pos:c.BulkLen]))
+				c.Argc++
+				pos += int(c.BulkLen + 2)
 				c.BulkLen = -1
 				c.MultiBulkLen--
 			}
 		}
-	}
-
-	if pos > 0 {
-		// trim to pos
-		c.QueryBuf = c.QueryBuf[pos:]
 	}
 	if c.MultiBulkLen == 0 {
 		return C_OK
@@ -401,36 +408,27 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 	return C_ERR
 }
 
-func ReadQueryFromClient(s *Server, c *Client) {
-	bufLen := int64(PROTO_IOBUF_LEN)
-	queryLen := int64(len(c.QueryBuf))
-	if c.RequestType == PROTO_REQ_MULTIBULK && c.MultiBulkLen != 0 && c.BulkLen != -1 && c.BulkLen >= PROTO_MBULK_BIG_ARG {
-		remaining := c.BulkLen + 2 - int64(queryLen)
-		if remaining < bufLen {
-			bufLen = remaining
-		}
-	}
-	if c.QueryBufPeak < queryLen {
-		c.QueryBufPeak = queryLen
-	}
-	readCount, err := c.Conn.Read(c.QueryBuf)
+func ReadFromClient(s *Server, c *Client) {
+
+	n, err := c.Conn.Read(c.QueryBuf)
 	if err != nil {
 		return
 	}
-	if readCount == 0 {
-		return
+	c.HeartBeatCh <- struct{}{}
+	c.QueryBufSize = int64(n)
+	if c.QueryBufPeak < c.QueryBufSize {
+		c.QueryBufPeak = c.QueryBufSize
 	}
-	c.LastInteraction = s.UnixTime
-	//if c.WithFlags(CLIENT_MASTER) {
-	//	c.ReadReplyOff += int64(readCount)
-	//}
-	s.StatNetInputBytes += int64(readCount)
-	if int64(len(c.QueryBuf)) > s.ClientMaxQueryBufLen {
+	s.mutex.Lock()
+	c.SetLastInteraction(s.UnixTime)
+	s.StatNetInputBytes += c.QueryBufSize
+	s.mutex.Unlock()
+
+	if c.QueryBufSize > s.ClientMaxQueryBufLen {
 		CloseClient(s, c)
 		return
 	}
 	ProcessInputBuffer(s, c)
-
 }
 
 /* This function is called every time, in the client structure 'c', there is
@@ -455,13 +453,12 @@ func ProcessInputBuffer(s *Server, c *Client) {
 				break
 			}
 		} else if c.RequestType == PROTO_REQ_MULTIBULK {
-			if ProcessMultiBulkBuffer(s, c) != C_ERR {
+			if ProcessMultiBulkBuffer(s, c) != C_OK {
 				break
 			}
 		} else {
 			panic("Unknown request type")
 		}
-
 		if c.Argc == 0 {
 			c.Reset()
 		} else {
@@ -512,66 +509,64 @@ func ProcessInputBuffer(s *Server, c *Client) {
  *
  */
 func Call(s *Server, c *Client, flags int64) {
-	clientOldFlags := c.Flags
-	c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
-
-	dirty := s.Dirty
-	start := time.Now()
+	//clientOldFlags := c.Flags
+	//c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
+	//dirty := s.Dirty
+	//start := time.Now()
 	c.Cmd.Process(s, c)
-	duration := time.Since(start)
-	dirty = s.Dirty - dirty
-	if dirty < 0 {
-		dirty = 0
-	}
-
-	if flags&CMD_CALL_PROPAGATE != 0 {
-		c.LastCmd.Duration = duration
-		c.LastCmd.Calls++
-		if c.Flags&CLIENT_PREVENT_AOF_PROP != CLIENT_PREVENT_PROP {
-			propagateFlags := PROPAGATE_NONE
-			if dirty != 0 {
-				propagateFlags |= PROPAGATE_AOF | PROPAGATE_REPL
-			}
-			if c.WithFlags(CLIENT_FORCE_REPL) {
-				propagateFlags |= PROPAGATE_REPL
-			}
-			if c.WithFlags(CLIENT_FORCE_AOF) {
-				propagateFlags |= PROPAGATE_AOF
-			}
-			if c.WithFlags(CLIENT_PREVENT_REPL_PROP) {
-				propagateFlags &= ^PROPAGATE_REPL
-			}
-			if c.WithFlags(CLIENT_PREVENT_AOF_PROP) {
-				propagateFlags &= ^PROPAGATE_AOF
-			}
-			if propagateFlags != PROPAGATE_NONE && !c.Cmd.WithFlags(CMD_MODULE) {
-				Propagate(s, c.Cmd, c.Db.Id, c.Argc, c.Argv, int64(propagateFlags))
-			}
-		}
-	}
-	c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
-	c.AddFlags(clientOldFlags | CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
+	//duration := time.Since(start)
+	//dirty = s.Dirty - dirty
+	//if dirty < 0 {
+	//	dirty = 0
+	//}
+	//if flags&CMD_CALL_PROPAGATE != 0 {
+	//	c.LastCmd.Duration = duration
+	//	c.LastCmd.Calls++
+	//	if c.Flags&CLIENT_PREVENT_AOF_PROP != CLIENT_PREVENT_PROP {
+	//		propagateFlags := PROPAGATE_NONE
+	//		if dirty != 0 {
+	//			propagateFlags |= PROPAGATE_AOF | PROPAGATE_REPL
+	//		}
+	//		if c.WithFlags(CLIENT_FORCE_REPL) {
+	//			propagateFlags |= PROPAGATE_REPL
+	//		}
+	//		if c.WithFlags(CLIENT_FORCE_AOF) {
+	//			propagateFlags |= PROPAGATE_AOF
+	//		}
+	//		if c.WithFlags(CLIENT_PREVENT_REPL_PROP) {
+	//			propagateFlags &= ^PROPAGATE_REPL
+	//		}
+	//		if c.WithFlags(CLIENT_PREVENT_AOF_PROP) {
+	//			propagateFlags &= ^PROPAGATE_AOF
+	//		}
+	//		if propagateFlags != PROPAGATE_NONE && !c.Cmd.WithFlags(CMD_MODULE) {
+	//			Propagate(s, c.Cmd, c.Db.Id, c.Argc, c.Argv, int64(propagateFlags))
+	//		}
+	//	}
+	//}
+	//c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
+	//c.AddFlags(clientOldFlags | CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
 	s.StatNumCommands++
 }
 
 /* If this function gets called we already read a whole
  * command, arguments are in the client argv/argc fields.
  * processCommand() execute the command or prepare the
- * server for a bulk read from the client.
+ * test_server for a bulk read from the client.
  *
  * If C_OK is returned the client is still alive and valid and
  * other operations can be performed by the caller. Otherwise
  * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
 func ProcessCommand(s *Server, c *Client) int64 {
-	if c.Argv[0] == "quit" {
-		/* The QUIT command is handled separately. Normal command procs will
-		 * go through checking for replication and QUIT will cause trouble
-		 * when FORCE_REPLICATION is enabled and would be implemented in
-		 * a regular command proc. */
-		AddReply(s, c, s.Shared.Ok)
-		c.AddFlags(CLIENT_CLOSE_AFTER_REPLY)
-		return C_ERR
-	}
+	//if c.Argv[0] == "quit" {
+	//	/* The QUIT command is handled separately. Normal command procs will
+	//	 * go through checking for replication and QUIT will cause trouble
+	//	 * when FORCE_REPLICATION is enabled and would be implemented in
+	//	 * a regular command proc. */
+	//	AddReply(s, c, s.Shared.Ok)
+	//	c.AddFlags(CLIENT_CLOSE_AFTER_REPLY)
+	//	return C_ERR
+	//}
 	c.Cmd = LookUpCommand(s, c.Argv[0])
 	c.LastCmd = c.Cmd
 	if c.Cmd == nil {
@@ -586,41 +581,42 @@ func ProcessCommand(s *Server, c *Client) int64 {
 		AddReplyError(s, c, s.Shared.NoAuthErr)
 		return C_OK
 	}
-	/* Handle the maxmemory directive.
-	 *
-	 * First we try to free some memory if possible (if there are volatile
-	 * keys in the dataset). If there are not the only thing we can do
-	 * is returning an error. */
-	if s.MaxMemory != 0 {
-		result := FreeMemoryIfNeeded(s)
-		if s.CurrentClient == nil {
-			return C_ERR
-		}
-		if c.Cmd.WithFlags(CMD_DENYOOM) && result == C_ERR {
-			AddReplyError(s, c, s.Shared.OOMErr)
-			return C_OK
-		}
-	}
+	///* Handle the maxmemory directive.
+	//*
+	//* First we try to free some memory if possible (if there are volatile
+	//* keys in the dataset). If there are not the only thing we can do
+	//* is returning an error. */
+	//if s.MaxMemory != 0 {
+	//	result := FreeMemoryIfNeeded(s)
+	//	if s.CurrentClient == nil {
+	//		return C_ERR
+	//	}
+	//	if c.Cmd.WithFlags(CMD_DENYOOM) && result == C_ERR {
+	//		AddReplyError(s, c, s.Shared.OOMErr)
+	//		return C_OK
+	//	}
+	//}
 
-	/* Loading DB? Return an error if the command has not the
-	 * CMD_LOADING flag. */
-	if s.Loading && c.Cmd.WithFlags(CMD_LOADING) {
-		AddReply(s, c, s.Shared.LoadingErr)
-		return C_OK
-	}
+	///* Loading DB? Return an error if the command has not the
+	//	// * CMD_LOADING flag. */
+	//	//if s.Loading && c.Cmd.WithFlags(CMD_LOADING) {
+	//	//	AddReply(s, c, s.Shared.LoadingErr)
+	//	//	return C_OK
+	//	//}
 
 	Call(s, c, CMD_CALL_FULL)
+
 	return C_OK
 }
 
-func FreeMemoryIfNeeded(s *Server) int64 {
-	// TODO:
-	return C_OK
-}
-
-func Propagate(s *Server, cmd *Command, dbid int64, argc int64, argv []string, flags int64) {
-	//TODO:
-}
+//func FreeMemoryIfNeeded(s *Server) int64 {
+//	// TODO:
+//	return C_OK
+//}
+//
+//func Propagate(s *Server, cmd *Command, dbid int64, argc int64, argv []string, flags int64) {
+//	//TODO:
+//}
 
 func LookUpCommand(s *Server, name string) *Command {
 	return s.Commands[name]
@@ -679,60 +675,73 @@ func SelectDB(s *Server, c *Client, dbId int64) int64 {
 }
 
 func UpdateCachedTime(s *Server) {
-	s.mutex.Lock()
 	s.UnixTime = time.Now()
-	s.mutex.Unlock()
 }
 
 func UpdateLRUClock(s *Server) {
-	s.mutex.Lock()
 	s.LruClock = time.Now()
-	s.mutex.Unlock()
+}
+
+func ServerCronHandler(s *Server) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	//s.ServerLogDebugF("-->%v, Loop: %d\n", "ServerCron", s.CronLoops)
+	UpdateCachedTime(s)
+	UpdateLRUClock(s)
+	ClientCron(s)
+	DbsCron(s)
+	CloseClientsInAsyncList(s)
+	s.CronLoops++
 }
 
 func ServerCron(s *Server) {
+	s.wg.Add(1)
+	defer s.wg.Done()
 	for {
 		select {
 		case <-s.CloseCh:
+			s.ServerLogDebugF("-->%v\n", "ServerCron ------ SHUTDOWN")
 			return
 		default:
-			s.ServerLogDebugF("-->%v, Loop: %d\n", "ServerCron", s.CronLoops)
-			UpdateCachedTime(s)
-			UpdateLRUClock(s)
-			ClientCron(s)
-			DbsCron(s)
-			CloseClientsInAsyncList(s)
-			s.CronLoops++
-			time.Sleep(100 *time.Millisecond)
+			go ServerCronHandler(s)
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
 }
 
 func ClientCronHandler(s *Server, c *Client, wg sync.WaitGroup) {
-	// Client Time Out
-	wg.Add(1)
 	c.mutex.Lock()
-	if s.MaxIdleTime != 0*time.Millisecond && time.Since(c.LastInteraction) > s.MaxIdleTime {
+	defer c.mutex.Unlock()
+
+	wg.Add(1)
+	defer wg.Done()
+
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	// Client Time Out
+	if s.MaxIdleTime != 0*time.Millisecond && time.Since(c.GetLastInteraction()) > s.MaxIdleTime {
 		// time out, no interaction time longer than the idle time for client
 		CloseClient(s, c)
 	}
 
 	// Client Resize QueryBuf
-	idleTime := s.UnixTime.Sub(c.LastInteraction)
+	idleTime := s.UnixTime.Sub(c.GetLastInteraction())
 	queryBufSize := int64(len(c.QueryBuf) + cap(c.QueryBuf))
 	/* There are two conditions to resize the query buffer:
  * 1) Query buffer is > BIG_ARG and too big for latest peak.
  * 2) Query buffer is > BIG_ARG and client is idle. */
-	if queryBufSize > PROTO_MBULK_BIG_ARG && ((queryBufSize/c.QueryBufPeak+1) > 2 || idleTime > 2 * time.Millisecond) {
-		if cap(c.QueryBuf) > 1024 * 4 {
+	if queryBufSize > PROTO_MBULK_BIG_ARG && ((queryBufSize/c.QueryBufPeak+1) > 2 || idleTime > 2*time.Millisecond) {
+		if cap(c.QueryBuf) > 1024*4 {
 			newSlice := make([]byte, len(c.QueryBuf))
 			copy(newSlice, c.QueryBuf)
 			c.QueryBuf = newSlice
 		}
 	}
 	c.QueryBufPeak = 0
-	c.mutex.Unlock()
-	wg.Done()
 }
 func ClientCron(s *Server) {
 	wg := sync.WaitGroup{}
@@ -756,7 +765,7 @@ func ServerExists() (int, error) {
 		if pidStr, err2 := ioutil.ReadAll(redigoPidFile); err2 == nil {
 			if pid, err3 := strconv.Atoi(string(pidStr)); err3 == nil {
 				if _, err4 := os.FindProcess(pid); err4 == nil {
-					return pid, errors.New(fmt.Sprintf("Error! Redigo server is now runing. Pid is %d", pid))
+					return pid, errors.New(fmt.Sprintf("Error! Redigo test_server is now runing. Pid is %d", pid))
 				}
 			}
 		}
@@ -823,12 +832,13 @@ func CreateServer() *Server {
 			make(chan struct{}, 1),
 			LL_DEBUG,
 			0 * time.Millisecond,
+			sync.WaitGroup{},
 		}
 		for i := int64(0); i < s.DbNum; i++ {
 			s.Dbs = append(s.Dbs, CreateDb(i))
 		}
-		s.Clients = ListCreate()
-		s.ClientsToClose = ListCreate()
+		s.Clients = CreateSyncList()
+		s.ClientsToClose = CreateSyncList()
 		s.BindAddrs = append(s.BindAddrs, "0.0.0.0")
 		s.BindAddrCount++
 		CreateShared(&s)
@@ -864,9 +874,10 @@ func CloseServer(s *Server) {
 		CloseClient(s, node.Value.(*Client))
 	}
 
-	//notify server is closed
+	//notify test_server is closed
 	close(s.CloseCh)
-	os.Remove(s.PidFile)
+	s.wg.Wait()
+	defer os.Remove(s.PidFile)
 }
 
 func HandleSignal(s *Server) {

@@ -297,7 +297,7 @@ func MSetGenericCommand(s *Server, c *Client, flags int64) {
 			}
 		}
 		if existKeyCount != 0 {
-			// addReply(c, s.Shared.CommandZero)
+			AddReply(s, c, s.Shared.Zero)
 			return
 		}
 	}

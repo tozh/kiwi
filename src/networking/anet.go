@@ -42,10 +42,12 @@ func AnetTcpAddress(ip string, port int64) string {
 func AnetListenUnix(address string) *net.UnixListener {
 	addr, err1 := net.ResolveUnixAddr("unix", address)
 	if err1 != nil {
+		fmt.Println("1 --------> ", err1)
 		return nil
 	}
 	listener, err2 := net.ListenUnix("unix", addr)
 	if err2 != nil {
+		fmt.Println("2 --------> ", err2)
 		AnetSetErrorFormat("Listen err2: %s", err2)
 		return nil
 	}

@@ -50,15 +50,15 @@ const C_ERR = 1
 // Client flags
 
 /* Client flags */
-const CLIENT_SLAVE = 1 << 0             /* This client is a slave server */
-const CLIENT_MASTER = 1 << 1            /* This client is a master server */
+const CLIENT_SLAVE = 1 << 0             /* This client is a slave test_server */
+const CLIENT_MASTER = 1 << 1            /* This client is a master test_server */
 const CLIENT_MONITOR = 1 << 2           /* This client is a slave monitor, see MONITOR */
 const CLIENT_MULTI = 1 << 3             /* This client is in a MULTI context */
 const CLIENT_BLOCKED = 1 << 4           /* The client is waiting in a blocking operation */
 const CLIENT_DIRTY_CAS = 1 << 5         /* Watched keys modified. EXEC will fail. */
 const CLIENT_CLOSE_AFTER_REPLY = 1 << 6 /* Close after writing entire reply. */
 const CLIENT_UNBLOCKED = 1 << 7         /* This client was unblocked and is stored in
-                                  server.unblocked_clients */
+                                  test_server.unblocked_clients */
 const CLIENT_LUA = 1 << 8                 /* This is a non connected client used by Lua */
 const CLIENT_ASKING = 1 << 9              /* Client issued the ASKING command */
 const CLIENT_CLOSE_ASAP = 1 << 10         /* Close this client ASAP */
@@ -81,6 +81,7 @@ const CLIENT_REPLY_SKIP = 1 << 24      /* Don't send just this reply. */
 const CLIENT_LUA_DEBUG = 1 << 25       /* Run EVAL in debug mode. */
 const CLIENT_LUA_DEBUG_SYNC = 1 << 26  /* EVAL debugging without fork() */
 const CLIENT_MODULE = 1 << 27          /* Non connected client used by some module. */
+const CLIENT_CLOSING = 1 << 28
 
 /* Client request types */
 const PROTO_REQ_INLINE = 1

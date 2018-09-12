@@ -323,3 +323,12 @@ func HexDigitToInt(b byte) byte {
 		return 0
 	}
 }
+
+func IndexOfBytes(bytes []byte, start int, end int, target byte) int {
+	for i := start; i<end; i++ {
+		if bytes[i] == target {
+			return i
+		}
+	}
+	return -1
+}

@@ -13,7 +13,7 @@ type data struct{
 }
 
 func test() {
-	list := ListCreate()
+	list := CreateList()
 	for i:=0;i<10;i++ {
 		d := data{
 			"tong",
@@ -28,7 +28,7 @@ func test() {
 		node = iter.ListNext()
 	}
 
-	cpList := ListDup(list)
+	cpList := DupList(list)
 	iter2 := cpList.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	node2 := iter2.ListNext()
 	for node2!=nil {
