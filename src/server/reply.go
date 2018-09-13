@@ -1,7 +1,6 @@
 package server
 
 import (
-	. "redigo/src/constant"
 	"strconv"
 	"strings"
 	"fmt"

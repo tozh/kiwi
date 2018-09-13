@@ -2,7 +2,7 @@ package test
 
 import (
 	."redigo/src/structure"
-	."redigo/src/constant"
+	."redigo/src/server"
 	"fmt"
 )
 

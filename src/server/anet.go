@@ -1,10 +1,9 @@
-package networking
+package server
 
 import (
 	"fmt"
 	"net"
 	"time"
-	. "redigo/src/constant"
 )
 
 func AnetSetErrorFormat(format string, a ...interface{}) string {

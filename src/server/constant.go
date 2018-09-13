@@ -1,4 +1,4 @@
-package constant
+package server
 
 /* constants for linkedlist */
 const ITERATION_DIRECTION_INORDER = 1
@@ -155,14 +155,13 @@ const CMD_FAST = 1 << 13              /* "F" flag */
 const CMD_MODULE_GETKEYS = 1 << 14    /* Use the modules getkeys interface. */
 const CMD_MODULE_NO_CLUSTER = 1 << 15 /* Deny on Redis Cluster. */
 
-
 /* Command call flags, see call() function */
 const CMD_CALL_NONE = 0
-const CMD_CALL_SLOWLOG = 1<<0
-const CMD_CALL_STATS = 1<<1
-const CMD_CALL_PROPAGATE_AOF = 1<<2
-const CMD_CALL_PROPAGATE_REPL = 1<<3
-const CMD_CALL_PROPAGATE = CMD_CALL_PROPAGATE_AOF|CMD_CALL_PROPAGATE_REPL
+const CMD_CALL_SLOWLOG = 1 << 0
+const CMD_CALL_STATS = 1 << 1
+const CMD_CALL_PROPAGATE_AOF = 1 << 2
+const CMD_CALL_PROPAGATE_REPL = 1 << 3
+const CMD_CALL_PROPAGATE = CMD_CALL_PROPAGATE_AOF | CMD_CALL_PROPAGATE_REPL
 const CMD_CALL_FULL = CMD_CALL_SLOWLOG | CMD_CALL_STATS | CMD_CALL_PROPAGATE
 
 /* Command propagation flags, see propagate() function */
@@ -172,6 +171,6 @@ const PROPAGATE_REPL = 2
 
 const DEFAULT_DB_NUM = 16
 
-const CONFIG_DEFAULT_PROTO_MAX_BULK_LEN = 512*1024*1024
+const CONFIG_DEFAULT_PROTO_MAX_BULK_LEN = 512 * 1024 * 1024
 const CONFIG_DEFAULT_MAXMEMORY = 0
 const CONFIG_DEFAULT_MAX_CLIENTS = 10000

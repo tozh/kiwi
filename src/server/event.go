@@ -2,8 +2,6 @@ package server
 
 import (
 	"net"
-	. "redigo/src/networking"
-	. "redigo/src/constant"
 	"fmt"
 	"time"
 )
@@ -108,7 +106,7 @@ NOTE: You only need to do one of the above things in order for the test_server t
 	c.AddFlags(flags)
 
 	go ProcessClientLoop(s, c)
-	go ClientCloseListener(s, c)
+	go CloseClientListener(s, c)
 }
 
 func ProcessClientLoop(s *Server, c *Client) {
@@ -168,12 +166,12 @@ func ServerCloseListener(s *Server) {
 	}
 }
 
-func ClientCloseListener(s *Server, c *Client) {
+func CloseClientListener(s *Server, c *Client) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 	select {
 	case <-c.CloseCh:
-		fmt.Println("CloseLoop ----> Close Client Sync")
+		fmt.Println("CloseClientListener ----> Close Client")
 		CloseClient(s, c)
 		return
 	}

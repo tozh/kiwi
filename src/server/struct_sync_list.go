@@ -1,82 +1,45 @@
-package structure
+package server
 
 import (
-	. "redigo/src/constant"
+	"sync"
 )
 
-/* definition of List struct */
-type ListNode struct {
-	Prev  *ListNode
-	Next  *ListNode
-	Value interface{}
-}
-
-/* ListNode methods */
-func (node *ListNode) ListPrevNode() *ListNode {
-	return node.Prev
-}
-
-func (node *ListNode) ListNextNode() *ListNode {
-	return node.Next
-}
-
-func (node *ListNode) ListNodeValue() interface{} {
-	return node.Value
-}
-
-type listIter struct {
-	Next      *ListNode
-	Direction int
-}
-
-func (iter *listIter) ListNext() *ListNode {
-	current := iter.Next
-	if current != nil {
-		if iter.Direction == ITERATION_DIRECTION_INORDER {
-			iter.Next = current.Next
-		} else {
-			iter.Next = current.Prev
-		}
-	}
-	return current
-}
-
-func (iter *listIter) ListRewind(list *List) {
-	iter.Next = list.Head
-	iter.Direction = ITERATION_DIRECTION_INORDER
-}
-
-func (iter *listIter) ListRewindTail(list *List) {
-	iter.Next = list.Tail
-	iter.Direction = ITERATION_DIRECTION_REVERSE_ORDER
-}
-
-type List struct {
+type SyncList struct {
 	Head  *ListNode
 	Tail  *ListNode
 	Len   int64
 	Match func(value interface{}, key interface{}) bool
+	mutex sync.RWMutex
 }
 
-
-/* List methods */
-func (list *List) ListLength() int64 {
+/* SyncList methods */
+func (list *SyncList) ListLength() int64 {
+	list.mutex.RLock()
+	defer list.mutex.RUnlock()
 	return list.Len
 }
 
-func (list *List) ListHead() *ListNode {
+func (list *SyncList) ListHead() *ListNode {
+	list.mutex.RLock()
+	defer list.mutex.RUnlock()
 	return list.Head
 }
 
-func (list *List) ListTail() *ListNode {
+func (list *SyncList) ListTail() *ListNode {
+	list.mutex.RLock()
+	defer list.mutex.RUnlock()
 	return list.Tail
 }
 
-func (list *List) ListSetMatch(match func(value interface{}, key interface{}) bool) {
+func (list *SyncList) ListSetMatch(match func(value interface{}, key interface{}) bool) {
+	list.mutex.Lock()
+	defer list.mutex.Unlock()
 	list.Match = match
 }
 
-func (list *List) ListAddNodeHead(value interface{}) {
+func (list *SyncList) ListAddNodeHead(value interface{}) {
+	list.mutex.Lock()
+	defer list.mutex.Unlock()
 	node := ListNode{}
 	node.Value = value
 	if list.Len == 0 {
@@ -93,7 +56,9 @@ func (list *List) ListAddNodeHead(value interface{}) {
 	list.Len++
 }
 
-func (list *List) ListAddNodeTail(value interface{}) {
+func (list *SyncList) ListAddNodeTail(value interface{}) {
+	list.mutex.Lock()
+	defer list.mutex.Unlock()
 	node := ListNode{}
 	node.Value = value
 	if list.Len == 0 {
@@ -110,13 +75,17 @@ func (list *List) ListAddNodeTail(value interface{}) {
 	list.Len++
 }
 
-/* Remove all the elements from the List without destroying the List itself. */
-func (list *List) ListEmpty() {
+/* Remove all the elements from the SyncList without destroying the SyncList itself. */
+func (list *SyncList) ListEmpty() {
+	list.mutex.Lock()
+	defer list.mutex.Unlock()
 	list.Len = 0
 	list.Head, list.Tail = nil, nil
 }
 
-func (list *List) ListInsertNode(oldNode *ListNode, value interface{}, after bool) {
+func (list *SyncList) ListInsertNode(oldNode *ListNode, value interface{}, after bool) {
+	list.mutex.Lock()
+	defer list.mutex.Unlock()
 	node := ListNode{}
 	node.Value = value
 	if after {
@@ -141,7 +110,9 @@ func (list *List) ListInsertNode(oldNode *ListNode, value interface{}, after boo
 	list.Len++
 }
 
-func (list *List) ListDelNode(node *ListNode) {
+func (list *SyncList) ListDelNode(node *ListNode) {
+	list.mutex.Lock()
+	defer list.mutex.Unlock()
 	if node.Prev != nil {
 		node.Prev.Next = node.Next
 	} else {
@@ -164,7 +135,9 @@ func (list *List) ListDelNode(node *ListNode) {
  * On success the first matching node pointer is returned
  * (search starts from Head). If no matching node exists
  * NULL is returned. */
-func (list *List) ListSearchKey(key interface{}) *ListNode {
+func (list *SyncList) ListSearchKey(key interface{}) *ListNode {
+	list.mutex.RLock()
+	defer list.mutex.RUnlock()
 	iter := list.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
 		if list.Match != nil {
@@ -185,7 +158,9 @@ func (list *List) ListSearchKey(key interface{}) *ListNode {
  * and so on. Negative integers are used in order to count
  * from the Tail, -1 is the last element, -2 the penultimate
  * and so on. If the index is out of range NULL is returned. */
-func (list *List) ListIndex(index int) *ListNode {
+func (list *SyncList) ListIndex(index int) *ListNode {
+	list.mutex.RLock()
+	defer list.mutex.RUnlock()
 	node := ListNode{}
 	if index < 0 {
 		index = (-index) - 1
@@ -204,7 +179,9 @@ func (list *List) ListIndex(index int) *ListNode {
 	return &node
 }
 
-func (list *List) ListRotate() {
+func (list *SyncList) ListRotate() {
+	list.mutex.Lock()
+	defer list.mutex.Unlock()
 	if list.ListLength() <= 1 {
 		return
 	}
@@ -221,7 +198,9 @@ func (list *List) ListRotate() {
 }
 
 /* join <other list> to the end of the list */
-func (list *List) ListJoin(other *List) {
+func (list *SyncList) ListJoin(other *SyncList) {
+	list.mutex.Lock()
+	defer list.mutex.Unlock()
 	if other.Head != nil {
 		other.Head.Prev = list.Tail
 	}
@@ -241,7 +220,9 @@ func (list *List) ListJoin(other *List) {
 }
 
 /* methods for listIter */
-func (list *List) ListGetIterator(direction int) *listIter {
+func (list *SyncList) ListGetIterator(direction int) *listIter {
+	list.mutex.RLock()
+	defer list.mutex.RUnlock()
 	iter := listIter{}
 	if direction == ITERATION_DIRECTION_INORDER {
 		iter.Next = list.Head
@@ -252,27 +233,28 @@ func (list *List) ListGetIterator(direction int) *listIter {
 	return &iter
 }
 
-/* functions for List, for Create, Dup*/
-func DupList(list *List) *List {
-	cp := CreateList()
+/* functions for SyncList, for Create, Dup*/
+func ListDup(list *SyncList) *SyncList {
+	cp := CreateSyncList()
 	if cp == nil {
 		return cp
 	}
 	cp.Match = list.Match
+
 	iter := list.ListGetIterator(ITERATION_DIRECTION_INORDER)
-	for node := iter.ListNext(); node != nil; node=iter.ListNext() {
+	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
 		value := node.Value
 		cp.ListAddNodeTail(value)
 	}
 	return cp
 }
 
-func CreateList() *List {
-	return &List{
-		Head: nil,
-		Tail: nil,
-		Len: 0,
+func CreateSyncList() *SyncList {
+	return &SyncList{
+		Head:  nil,
+		Tail:  nil,
+		Len:   0,
 		Match: nil,
-
+		mutex: sync.RWMutex{},
 	}
 }

@@ -1,14 +1,9 @@
 package server
 
 import (
-	. "redigo/src/structure"
-	. "redigo/src/constant"
-	. "redigo/src/networking"
 	"sync"
 	"fmt"
 	"strconv"
-	"bytes"
-	"net"
 	"time"
 	"os"
 	"os/signal"
@@ -16,6 +11,8 @@ import (
 	"io/ioutil"
 	"errors"
 	"path/filepath"
+	"net"
+	"bytes"
 )
 
 type Server struct {
@@ -68,20 +65,12 @@ type Server struct {
 
 func LruClock(s *Server) time.Time {
 	if 1000/s.Hz <= LRU_CLOCK_RESOLUTION {
-		// s.Hz >= 1, serverCron will update LRU, save resources
-		// s.Hz default is 10
 		return s.LruClock
 	} else {
 		return GetLruClock()
 	}
 }
 
-//
-//func GetLruClock() time.Time {
-//  //int version time, speed should compared with time.Time
-//	mstime := time.Now().UnixNano() / 1000
-//	return mstime / LRU_CLOCK_RESOLUTION & LRU_CLOCK_MAX
-//}
 func GetLruClock() time.Time {
 	return time.Now()
 }
@@ -120,7 +109,7 @@ func CreateClient(s *Server, conn net.Conn) *Client {
 		Authenticated:   0,
 		CloseCh:         make(chan struct{}, 1),
 		HeartBeatCh:     make(chan int64, 1),
-		ReadCount : 0,
+		ReadCount:       0,
 		mutex:           sync.RWMutex{},
 	}
 	c.GetNextClientId(s)
@@ -254,7 +243,7 @@ func WriteToClient(s *Server, c *Client) {
  * with the error and close the connection. */
 func ProcessInlineBuffer(s *Server, c *Client) int64 {
 	// Search for end of line
-	newline := IndexOfBytes(c.QueryBuf, 0, int(c.QueryBufSize),'\n')
+	newline := IndexOfBytes(c.QueryBuf, 0, int(c.QueryBufSize), '\n')
 
 	if newline == -1 {
 		if c.QueryBufSize > PROTO_INLINE_MAX_SIZE {
@@ -307,7 +296,7 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 		panic("c.Argc != 0")
 	}
 	if c.MultiBulkLen == 0 {
-		newline := IndexOfBytes(c.QueryBuf, 0, int(c.QueryBufSize),'\r')
+		newline := IndexOfBytes(c.QueryBuf, 0, int(c.QueryBufSize), '\r')
 		if newline < 0 {
 			if c.QueryBufSize > PROTO_INLINE_MAX_SIZE {
 				AddReplyError(s, c, "Protocol error: too big multibulk count request")
@@ -315,7 +304,7 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 			}
 			return C_ERR
 		}
-		if c.QueryBufSize - int64(newline) < 2 {
+		if c.QueryBufSize-int64(newline) < 2 {
 			// end with \r\n, so \r cannot be the last char
 			return C_ERR
 		}
@@ -352,7 +341,7 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 				}
 				break
 			}
-			if c.QueryBufSize - int64(newline) < 2 {
+			if c.QueryBufSize-int64(newline) < 2 {
 				// end with \r\n, so \r cannot be the last char
 				break
 			}
@@ -761,7 +750,6 @@ func DbsCron(s *Server) {
 
 func ServerExists() (int, error) {
 	fmt.Printf("-->%v\n", "ServerExists")
-
 	if redigoPidFile, err1 := os.Open(os.TempDir() + "redigo.pid"); err1 == nil {
 		defer redigoPidFile.Close()
 		if pidStr, err2 := ioutil.ReadAll(redigoPidFile); err2 == nil {
@@ -864,20 +852,7 @@ func StartServer(s *Server) {
 	}
 	go UnixServer(s)
 	go ServerCron(s)
-}
-
-func CloseServer(s *Server) {
-	s.ServerLogDebugF("-->%v\n", "CloseServer")
-	//CloseClientsInAsyncList(s)
-
-	// clear clients
-	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
-	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
-		BroadcastCloseClient(node.Value.(*Client))
-	}
-
-	s.wg.Wait()
-	defer os.Remove(s.PidFile)
+	go CloseServerListener(s)
 }
 
 func HandleSignal(s *Server) {
@@ -885,6 +860,29 @@ func HandleSignal(s *Server) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	s.ServerLogDebugF("-->%v: <%v>\n", "Signal", <-c)
-	CloseServer(s)
+	BroadcastCloseServer(s)
 }
 
+func CloseServerListener(s *Server) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+	select {
+	case <-s.CloseCh:
+		fmt.Println("CloseServerListener ----> Close Server")
+		CloseServer(s)
+		return
+	}
+}
+
+func CloseServer(s *Server) {
+	s.ServerLogDebugF("-->%v\n", "CloseServer")
+	// clear clients
+	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
+	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
+		BroadcastCloseClient(node.Value.(*Client))
+	}
+	defer os.Remove(s.UnixSocketPath)
+	defer os.Remove(s.PidFile)
+	s.wg.Wait()
+	os.Exit(0)
+}

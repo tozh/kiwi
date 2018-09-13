@@ -1,4 +1,4 @@
-package structure
+package server
 
 import "math/rand"
 import . "redigo/src/constant"

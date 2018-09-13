@@ -2,7 +2,6 @@ package server
 
 import (
 	"strconv"
-	. "redigo/src/constant"
 	"sync"
 )
 

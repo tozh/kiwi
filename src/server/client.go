@@ -1,8 +1,6 @@
 package server
 
 import (
-	. "redigo/src/structure"
-	. "redigo/src/constant"
 	"net"
 	"time"
 	"fmt"
