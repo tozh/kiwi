@@ -75,7 +75,7 @@ func TcpServer(s *Server, ip string) {
 }
 
 func CommonServer(s *Server, conn net.Conn, flags int64, ip string) {
-	c := CreateClient(s, conn)
+	c := CreateClient(s, conn, flags)
 	if c == nil {
 		conn.Close()
 		CloseClient(s, c)
@@ -103,8 +103,6 @@ NOTE: You only need to do one of the above things in order for the test_server t
 		conn.Write(err)
 		s.StatRejectedConn++
 	}
-	c.AddFlags(flags)
-
 	go ProcessClientLoop(s, c)
 	go CloseClientListener(s, c)
 }
@@ -114,19 +112,21 @@ func ProcessClientLoop(s *Server, c *Client) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 	for {
-		select {
-		case <-s.CloseCh:
-			fmt.Println("ReadLoop ----> Stop Server")
-			return
-		case <-c.CloseCh:
-			fmt.Println("ReadLoop ----> Stop Client")
-			return
-		default:
+		readCh := make(chan int64, 1)
+		if !c.WithFlags(CLIENT_LUA) && c.MaxIdleTime == 0 {
 			c.HeartBeatCh = make(chan int64, 1)
 			// TODO 如果有问题，改成独立chan的
 			go HeartBeating(s, c)
-			ReadFromClient(s, c)
-			WriteToClient(s, c)
+		}
+		go ReadFromClient(s, c, readCh)
+		select {
+		case <-c.CloseCh:
+			fmt.Println("ReadLoop ----> Stop Client")
+			return
+		case result := <-readCh:
+			if result == C_OK {
+				WriteToClient(s, c)
+			}
 		}
 	}
 }
@@ -138,12 +138,14 @@ func HeartBeating(s *Server, c *Client) {
 	select {
 	case <-c.CloseCh:
 		fmt.Println("HeartBeating ----> Close Client")
+		close(c.HeartBeatCh)
 		return
 	case readCount := <-c.HeartBeatCh:
 		fmt.Printf("HearBeat OK --> %d\n", readCount)
 		return
-	case <-time.After(time.Second * 3):
+	case <-time.After(c.MaxIdleTime):
 		fmt.Println("HearBeat fail. 3s reached.")
+		close(c.HeartBeatCh)
 		BroadcastCloseClient(c)
 		return
 	}
@@ -155,15 +157,6 @@ func BroadcastCloseClient(c *Client) {
 
 func BroadcastCloseServer(s *Server) {
 	close(s.CloseCh)
-}
-
-func ServerCloseListener(s *Server) {
-	s.wg.Add(1)
-	defer s.wg.Done()
-	select {
-	case <-s.CloseCh:
-		CloseServer(s)
-	}
 }
 
 func CloseClientListener(s *Server, c *Client) {

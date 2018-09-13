@@ -11,7 +11,7 @@ import (
 	"io/ioutil"
 	"errors"
 	"path/filepath"
-	"net"
+	"io"
 	"bytes"
 )
 
@@ -28,7 +28,7 @@ type Server struct {
 	OrigCommands         map[string]*Command
 	UnixTime             time.Time // UnixTime in nanosecond
 	LruClock             time.Time // Clock for LRU eviction
-	CronLoops            int64
+	CronLoopCount        int64
 	NextClientId         int64
 	Port                 int64 // TCP listening port
 	BindAddrs            []string
@@ -37,15 +37,14 @@ type Server struct {
 	CurrentClient        *Client
 	Clients              *SyncList // List of active clients
 	ClientsMap           map[int64]*Client
-	ClientsToClose       *SyncList // Clients to close asynchronously
 	ClientMaxQueryBufLen int64
+	ClientMaxReplyBufLen int64
 	MaxClients           int64
 	ProtectedMode        bool // Don't accept external connections.
 	RequirePassword      *string
 	TcpKeepAlive         bool
 	ProtoMaxBulkLen      int64
-	ClientsPaused        bool
-	ClientsPauseEndTime  time.Time
+	ClientMaxIdleTime    time.Duration
 	Dirty                int64 // Changes to DB from the last save
 	Shared               *SharedObjects
 	StatRejectedConn     int64
@@ -54,12 +53,11 @@ type Server struct {
 	StatNetInputBytes    int64
 	StatNumCommands      int64
 	ConfigFlushAll       bool
-	mutex                sync.RWMutex
 	MaxMemory            int64
 	Loading              bool
-	CloseCh              chan struct{}
 	LogLevel             int64
-	MaxIdleTime          time.Duration
+	CloseCh              chan struct{}
+	mutex                sync.RWMutex
 	wg                   sync.WaitGroup
 }
 
@@ -73,49 +71,6 @@ func LruClock(s *Server) time.Time {
 
 func GetLruClock() time.Time {
 	return time.Now()
-}
-
-func CreateClient(s *Server, conn net.Conn) *Client {
-	if conn != nil {
-		if s.TcpKeepAlive {
-			AnetSetTcpKeepALive(conn.(*net.TCPConn), s.TcpKeepAlive)
-		}
-	}
-	createTime := s.UnixTime
-	c := Client{
-		Id:              0,
-		Conn:            conn,
-		Name:            "",
-		QueryBuf:        make([]byte, PROTO_INLINE_MAX_SIZE),
-		QueryBufSize:    0,
-		QueryBufPeak:    0,
-		Argc:            0,                 // count of arguments
-		Argv:            make([]string, 0), // arguments of current command
-		Cmd:             nil,
-		LastCmd:         nil,
-		Reply:           CreateList(),
-		ReplySize:       0,
-		CreateTime:      createTime,
-		LastInteraction: createTime,
-		Buf:             make([]byte, PROTO_REPLY_CHUNK_BYTES),
-		BufPos:          0,
-		SentLen:         0,
-		Flags:           0,
-		Node:            nil,
-		PeerId:          "",
-		RequestType:     0,
-		MultiBulkLen:    0,
-		BulkLen:         0,
-		Authenticated:   0,
-		CloseCh:         make(chan struct{}, 1),
-		HeartBeatCh:     make(chan int64, 1),
-		ReadCount:       0,
-		mutex:           sync.RWMutex{},
-	}
-	c.GetNextClientId(s)
-	SelectDB(s, &c, 0)
-	LinkClient(s, &c)
-	return &c
 }
 
 func LinkClient(s *Server, c *Client) {
@@ -141,41 +96,13 @@ func UnLinkClient(s *Server, c *Client) {
 
 func CloseClient(s *Server, c *Client) {
 	fmt.Println("CloseClient")
-	if c.WithFlags(CLIENT_CLOSING) {
-		return
-	} else {
-		c.AddFlags(CLIENT_CLOSING)
-	}
 	c.QueryBuf = nil
-	c.Reply.ListEmpty()
-	c.Reply = nil
+	c.ReplyList.ListEmpty()
+	c.ReplyList = nil
 	c.ResetArgv()
 	UnLinkClient(s, c)
-	if c.WithFlags(CLIENT_CLOSE_ASAP) {
-		ln := s.ClientsToClose.ListSearchKey(c)
-		s.ClientsToClose.ListDelNode(ln)
-	}
 	close(c.CloseCh)
 }
-
-//func CloseClientAsync(s *Server, c *Client) {
-//	if c.WithFlags(CLIENT_CLOSE_ASAP) {
-//		return
-//	}
-//	c.AddFlags(CLIENT_CLOSE_ASAP)
-//	s.ClientsToClose.ListAddNodeTail(c)
-//}
-
-//func CloseClientsInAsyncList(s *Server) {
-//	//s.ServerLogDebugF("-->%v\n", "CloseClientsInAsyncList")
-//	for s.ClientsToClose.ListLength() != 0 {
-//		ln := s.ClientsToClose.ListHead()
-//		c := ln.Value.(*Client)
-//		c.DeleteFlags(CLIENT_CLOSE_ASAP)
-//		CloseClient(s, c)
-//		s.ClientsToClose.ListDelNode(ln)
-//	}
-//}
 
 func GetClientById(s *Server, id int64) *Client {
 	return s.ClientsMap[id]
@@ -185,8 +112,8 @@ func GetClientById(s *Server, id int64) *Client {
 func WriteToClient(s *Server, c *Client) {
 	written := int64(0)
 	for c.HasPendingReplies() {
-		if c.BufPos > 0 {
-			n, err := c.Write(c.Buf)
+		if c.ReplyBufSize > 0 {
+			n, err := c.Write(c.ReplyBuf[:c.ReplyBufSize])
 			if err == nil {
 				if n <= 0 {
 					break
@@ -194,15 +121,15 @@ func WriteToClient(s *Server, c *Client) {
 				c.SentLen += int64(n)
 				written += n
 			}
-			if c.SentLen == c.BufPos {
+			if c.SentLen == c.ReplyBufSize {
 				c.SentLen = 0
-				c.BufPos = 0
+				c.ReplyBufSize = 0
 			}
 		} else {
-			str := c.Reply.ListHead().Value.(*string)
+			str := c.ReplyList.ListHead().Value.(*string)
 			length := int64(len(*str))
 			if length == 0 {
-				c.Reply.ListDelNode(c.Reply.ListHead())
+				c.ReplyList.ListDelNode(c.ReplyList.ListHead())
 			}
 			n, err := c.Write([]byte(*str))
 			if err == nil {
@@ -213,11 +140,11 @@ func WriteToClient(s *Server, c *Client) {
 				written += n
 			}
 			if c.SentLen == length {
-				c.Reply.ListDelNode(c.Reply.ListHead())
+				c.ReplyList.ListDelNode(c.ReplyList.ListHead())
 				c.SentLen = 0
-				c.ReplySize -= length
-				if c.Reply.ListLength() == 0 {
-					c.ReplySize = 0
+				c.ReplyListSize -= length
+				if c.ReplyList.ListLength() == 0 {
+					c.ReplyListSize = 0
 				}
 			}
 		}
@@ -234,19 +161,12 @@ func WriteToClient(s *Server, c *Client) {
 	}
 }
 
-/* Like processMultibulkBuffer(), but for the inline protocol instead of RESP,
- * this function consumes the client query buffer and creates a command ready
- * to be executed inside the client structure. Returns C_OK if the command
- * is ready to be executed, or C_ERR if there is still protocol to read to
- * have a well formed command. The function also returns C_ERR when there is
- * a protocol error: in such a case the client structure is setup to reply
- * with the error and close the connection. */
 func ProcessInlineBuffer(s *Server, c *Client) int64 {
 	// Search for end of line
 	newline := IndexOfBytes(c.QueryBuf, 0, int(c.QueryBufSize), '\n')
 
 	if newline == -1 {
-		if c.QueryBufSize > PROTO_INLINE_MAX_SIZE {
+		if c.QueryBufSize > s.ClientMaxQueryBufLen {
 			AddReplyError(s, c, "Protocol error: too big inline request")
 			SetProtocolError(s, c, "too big inline request", 0)
 		}
@@ -279,17 +199,6 @@ func ProcessInlineBuffer(s *Server, c *Client) int64 {
 	return C_OK
 }
 
-/* Process the query buffer for client 'c', setting up the client argument
- * vector for command execution. Returns C_OK if after running the function
- * the client has a well-formed ready to be processed command, otherwise
- * C_ERR if there is still to read more buffer to get the full command.
- * The function also returns C_ERR when there is a protocol error: in such a
- * case the client structure is setup to reply with the error and close
- * the connection.
- *
- * This function is called if processInputBuffer() detects that the next
- * command is in RESP format, so the first byte in the command is found
- * to be '*'. Otherwise for inline commands processInlineBuffer() is called. */
 func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 	pos := 0
 	if c.Argc != 0 {
@@ -298,7 +207,7 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 	if c.MultiBulkLen == 0 {
 		newline := IndexOfBytes(c.QueryBuf, 0, int(c.QueryBufSize), '\r')
 		if newline < 0 {
-			if c.QueryBufSize > PROTO_INLINE_MAX_SIZE {
+			if c.QueryBufSize > s.ClientMaxQueryBufLen {
 				AddReplyError(s, c, "Protocol error: too big multibulk count request")
 				SetProtocolError(s, c, "too big multibulk request", 0)
 			}
@@ -334,7 +243,7 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 			// Read bulk length if unknown
 			newline := IndexOfBytes(c.QueryBuf, pos, int(c.QueryBufSize), '\r')
 			if newline < 0 {
-				if c.QueryBufSize > PROTO_INLINE_MAX_SIZE {
+				if c.QueryBufSize > s.ClientMaxQueryBufLen {
 					AddReplyError(s, c, "Protocol error: too big bulk count string")
 					SetProtocolError(s, c, "too big bulk count string", 0)
 					return C_ERR
@@ -357,33 +266,9 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 				return C_ERR
 			}
 			pos = newline + 2
-			// TODO Do not consider too long input
-			//if nulkNum >= PROTO_MBULK_BIG_ARG {
-			//	/* If we are going to read a large object from network
-			//	 * try to make it likely that it will start at c->querybuf
-			//	 * boundary so that we can optimize object creation
-			//	 * avoiding a large copy of data. */
-			//	c.QueryBuf = c.QueryBuf[pos:]
-			//	c.QueryBufSize = c.QueryBufSize-int64(pos)
-			//	pos = 0
-			//	if int(c.QueryBufSize) < nulkNum+2 {
-			//		//	the only bulk
-			//		c.QueryBuf = append(c.QueryBuf, make([]byte, nulkNum+2-int(c.QueryBufSize))...)
-			//	}
-			//	c.BulkLen = int64(nulkNum)
-			//}
 			if c.QueryBufSize-int64(pos) < c.BulkLen+2 {
 				break
 			} else {
-				// TODO Do not consider too long input
-				//if pos == 0 && c.BulkLen >= PROTO_MBULK_BIG_ARG && c.QueryBufSize == c.BulkLen+2 {
-				//	c.Argv = append(c.Argv, string(c.QueryBuf[pos:c.BulkLen]))
-				//	c.Argc++
-				//} else {
-				//	c.Argv = append(c.Argv, string(c.QueryBuf[pos:c.BulkLen]))
-				//	c.Argc++
-				//	pos += int(c.BulkLen + 2)
-				//}
 				c.Argv = append(c.Argv, string(c.QueryBuf[pos:c.BulkLen]))
 				c.Argc++
 				pos += int(c.BulkLen + 2)
@@ -398,40 +283,40 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 	return C_ERR
 }
 
-func ReadFromClient(s *Server, c *Client) {
-
+func ReadFromClient(s *Server, c *Client, readCh chan int64) {
 	n, err := c.Conn.Read(c.QueryBuf)
 	if err != nil {
+
+		if err == io.EOF {
+			fmt.Println("ReadFromClient: EOF !!!!")
+		} else {
+			fmt.Println(err)
+		}
+		BroadcastCloseClient(c)
+		readCh <- C_ERR
 		return
 	}
 	c.ReadCount++
-	c.HeartBeatCh <- c.ReadCount
-	c.QueryBufSize = int64(n)
-	if c.QueryBufPeak < c.QueryBufSize {
-		c.QueryBufPeak = c.QueryBufSize
+	if !c.WithFlags(CLIENT_LUA) && c.MaxIdleTime == 0 {
+		c.HeartBeatCh <- c.ReadCount
 	}
-	s.mutex.Lock()
+	c.QueryBufSize = int64(n)
 	c.SetLastInteraction(s.UnixTime)
+	s.mutex.Lock()
 	s.StatNetInputBytes += c.QueryBufSize
 	s.mutex.Unlock()
-
 	if c.QueryBufSize > s.ClientMaxQueryBufLen {
-		CloseClient(s, c)
+		BroadcastCloseClient(c)
+		readCh <- C_ERR
 		return
 	}
 	ProcessInputBuffer(s, c)
+	readCh <- C_OK
 }
 
-/* This function is called every time, in the client structure 'c', there is
- * more query buffer to process, because we read more data from the socket
- * or because a client was blocked and later reactivated, so there could be
- * pending query buffer, already representing a full command, to process. */
 func ProcessInputBuffer(s *Server, c *Client) {
 	s.CurrentClient = c
 	for len(c.QueryBuf) != 0 {
-		if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY | CLIENT_CLOSE_ASAP) {
-			break
-		}
 		if c.RequestType == 0 {
 			if c.QueryBuf[0] == '*' {
 				c.RequestType = PROTO_REQ_MULTIBULK
@@ -462,104 +347,13 @@ func ProcessInputBuffer(s *Server, c *Client) {
 	s.CurrentClient = nil
 }
 
-/* Call() is the core of Redis execution of a command.
- *
- * The following flags can be passed:
- * CMD_CALL_NONE        No flags.
- * CMD_CALL_SLOWLOG     Check command speed and log in the slow log if needed.
- * CMD_CALL_STATS       Populate command stats.
- * CMD_CALL_PROPAGATE_AOF   Append command to AOF if it modified the dataset
- *                          or if the client flags are forcing propagation.
- * CMD_CALL_PROPAGATE_REPL  Send command to salves if it modified the dataset
- *                          or if the client flags are forcing propagation.
- * CMD_CALL_PROPAGATE   Alias for PROPAGATE_AOF|PROPAGATE_REPL.
- * CMD_CALL_FULL        Alias for SLOWLOG|STATS|PROPAGATE.
- *
- * The exact propagation behavior depends on the client flags.
- * Specifically:
- *
- * 1. If the client flags CLIENT_FORCE_AOF or CLIENT_FORCE_REPL are set
- *    and assuming the corresponding CMD_CALL_PROPAGATE_AOF/REPL is set
- *    in the call flags, then the command is propagated even if the
- *    dataset was not affected by the command.
- * 2. If the client flags CLIENT_PREVENT_REPL_PROP or CLIENT_PREVENT_AOF_PROP
- *    are set, the propagation into AOF or to slaves is not performed even
- *    if the command modified the dataset.
- *
- * Note that regardless of the client flags, if CMD_CALL_PROPAGATE_AOF
- * or CMD_CALL_PROPAGATE_REPL are not set, then respectively AOF or
- * slaves propagation will never occur.
- *
- * Client flags are modified by the implementation of a given command
- * using the following API:
- *
- * forceCommandPropagation(client *c, int flags);
- * preventCommandPropagation(client *c);
- * preventCommandAOF(client *c);
- * preventCommandReplication(client *c);
- *
- */
-func Call(s *Server, c *Client, flags int64) {
-	//clientOldFlags := c.Flags
-	//c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
-	//dirty := s.Dirty
-	//start := time.Now()
+func Call(s *Server, c *Client) {
 	c.Cmd.Process(s, c)
-	//duration := time.Since(start)
-	//dirty = s.Dirty - dirty
-	//if dirty < 0 {
-	//	dirty = 0
-	//}
-	//if flags&CMD_CALL_PROPAGATE != 0 {
-	//	c.LastCmd.Duration = duration
-	//	c.LastCmd.Calls++
-	//	if c.Flags&CLIENT_PREVENT_AOF_PROP != CLIENT_PREVENT_PROP {
-	//		propagateFlags := PROPAGATE_NONE
-	//		if dirty != 0 {
-	//			propagateFlags |= PROPAGATE_AOF | PROPAGATE_REPL
-	//		}
-	//		if c.WithFlags(CLIENT_FORCE_REPL) {
-	//			propagateFlags |= PROPAGATE_REPL
-	//		}
-	//		if c.WithFlags(CLIENT_FORCE_AOF) {
-	//			propagateFlags |= PROPAGATE_AOF
-	//		}
-	//		if c.WithFlags(CLIENT_PREVENT_REPL_PROP) {
-	//			propagateFlags &= ^PROPAGATE_REPL
-	//		}
-	//		if c.WithFlags(CLIENT_PREVENT_AOF_PROP) {
-	//			propagateFlags &= ^PROPAGATE_AOF
-	//		}
-	//		if propagateFlags != PROPAGATE_NONE && !c.Cmd.WithFlags(CMD_MODULE) {
-	//			Propagate(s, c.Cmd, c.Db.Id, c.Argc, c.Argv, int64(propagateFlags))
-	//		}
-	//	}
-	//}
-	//c.DeleteFlags(CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
-	//c.AddFlags(clientOldFlags | CLIENT_FORCE_AOF | CLIENT_FORCE_REPL | CLIENT_PREVENT_PROP)
 	s.StatNumCommands++
 }
 
-/* If this function gets called we already read a whole
- * command, arguments are in the client argv/argc fields.
- * processCommand() execute the command or prepare the
- * test_server for a bulk read from the client.
- *
- * If C_OK is returned the client is still alive and valid and
- * other operations can be performed by the caller. Otherwise
- * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
 func ProcessCommand(s *Server, c *Client) int64 {
-	//if c.Argv[0] == "quit" {
-	//	/* The QUIT command is handled separately. Normal command procs will
-	//	 * go through checking for replication and QUIT will cause trouble
-	//	 * when FORCE_REPLICATION is enabled and would be implemented in
-	//	 * a regular command proc. */
-	//	AddReply(s, c, s.Shared.Ok)
-	//	c.AddFlags(CLIENT_CLOSE_AFTER_REPLY)
-	//	return C_ERR
-	//}
 	c.Cmd = LookUpCommand(s, c.Argv[0])
-	c.LastCmd = c.Cmd
 	if c.Cmd == nil {
 		AddReplyError(s, c, fmt.Sprintf("unknown command '%s'", c.Argv[0]))
 		return C_OK
@@ -572,42 +366,9 @@ func ProcessCommand(s *Server, c *Client) int64 {
 		AddReplyError(s, c, s.Shared.NoAuthErr)
 		return C_OK
 	}
-	///* Handle the maxmemory directive.
-	//*
-	//* First we try to free some memory if possible (if there are volatile
-	//* keys in the dataset). If there are not the only thing we can do
-	//* is returning an error. */
-	//if s.MaxMemory != 0 {
-	//	result := FreeMemoryIfNeeded(s)
-	//	if s.CurrentClient == nil {
-	//		return C_ERR
-	//	}
-	//	if c.Cmd.WithFlags(CMD_DENYOOM) && result == C_ERR {
-	//		AddReplyError(s, c, s.Shared.OOMErr)
-	//		return C_OK
-	//	}
-	//}
-
-	///* Loading DB? Return an error if the command has not the
-	//	// * CMD_LOADING flag. */
-	//	//if s.Loading && c.Cmd.WithFlags(CMD_LOADING) {
-	//	//	AddReply(s, c, s.Shared.LoadingErr)
-	//	//	return C_OK
-	//	//}
-
-	Call(s, c, CMD_CALL_FULL)
-
+	Call(s, c)
 	return C_OK
 }
-
-//func FreeMemoryIfNeeded(s *Server) int64 {
-//	// TODO:
-//	return C_OK
-//}
-//
-//func Propagate(s *Server, cmd *Command, dbid int64, argc int64, argv []string, flags int64) {
-//	//TODO:
-//}
 
 func LookUpCommand(s *Server, name string) *Command {
 	return s.Commands[name]
@@ -625,14 +386,12 @@ func SetProtocolError(s *Server, c *Client, err string, pos int64) {
 				buf[i] = '.'
 			}
 		}
-		c.AddFlags(CLIENT_CLOSE_AFTER_REPLY)
 		c.QueryBuf = c.QueryBuf[pos:]
 	}
 }
 
 func GetAllClientInfoString(s *Server, ctype int64) string {
 	str := bytes.Buffer{}
-
 	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
 		c := node.Value.(*Client)
@@ -678,14 +437,9 @@ func ServerCronHandler(s *Server) {
 	defer s.mutex.Unlock()
 	s.wg.Add(1)
 	defer s.wg.Done()
-
-	//s.ServerLogDebugF("-->%v, Loop: %d\n", "ServerCron", s.CronLoops)
 	UpdateCachedTime(s)
 	UpdateLRUClock(s)
-	ClientCron(s)
-	DbsCron(s)
-	//CloseClientsInAsyncList(s)
-	s.CronLoops++
+	s.CronLoopCount++
 }
 
 func ServerCron(s *Server) {
@@ -696,56 +450,10 @@ func ServerCron(s *Server) {
 		case <-s.CloseCh:
 			s.ServerLogDebugF("-->%v\n", "ServerCron ------ SHUTDOWN")
 			return
-		default:
+		case <-time.After(time.Millisecond * time.Duration(1000/s.Hz)):
 			go ServerCronHandler(s)
-			time.Sleep(100 * time.Millisecond)
 		}
 	}
-}
-
-func ClientCronHandler(s *Server, c *Client, wg sync.WaitGroup) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	wg.Add(1)
-	defer wg.Done()
-
-	s.wg.Add(1)
-	defer s.wg.Done()
-
-	// Client Time Out
-	if s.MaxIdleTime != 0*time.Millisecond && time.Since(c.GetLastInteraction()) > s.MaxIdleTime {
-		// time out, no interaction time longer than the idle time for client
-		CloseClient(s, c)
-	}
-
-	// Client Resize QueryBuf
-	idleTime := s.UnixTime.Sub(c.GetLastInteraction())
-	queryBufSize := int64(len(c.QueryBuf) + cap(c.QueryBuf))
-	/* There are two conditions to resize the query buffer:
- * 1) Query buffer is > BIG_ARG and too big for latest peak.
- * 2) Query buffer is > BIG_ARG and client is idle. */
-	if queryBufSize > PROTO_MBULK_BIG_ARG && ((queryBufSize/c.QueryBufPeak+1) > 2 || idleTime > 2*time.Millisecond) {
-		if cap(c.QueryBuf) > 1024*4 {
-			newSlice := make([]byte, len(c.QueryBuf))
-			copy(newSlice, c.QueryBuf)
-			c.QueryBuf = newSlice
-		}
-	}
-	c.QueryBufPeak = 0
-}
-func ClientCron(s *Server) {
-	wg := sync.WaitGroup{}
-	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
-	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
-		c := node.Value.(*Client)
-		go ClientCronHandler(s, c, wg)
-	}
-	wg.Wait()
-}
-
-func DbsCron(s *Server) {
-
 }
 
 func ServerExists() (int, error) {
@@ -764,7 +472,7 @@ func ServerExists() (int, error) {
 }
 
 func CreateServer() *Server {
-	fmt.Printf("-->%s\n", "CreateServer")
+	fmt.Println("CreateServer")
 	pidFile := os.TempDir() + "redigo.pid"
 	unixSocketPath := os.TempDir() + "redigo.sock"
 	if pid, err1 := ServerExists(); err1 == nil {
@@ -777,58 +485,53 @@ func CreateServer() *Server {
 		configPath, _ := filepath.Abs(filepath.Dir(os.Args[0]))
 		nowTime := time.Now()
 		s := Server{
-			int64(pid),
-			pidFile,
-			configPath,
-			os.Args[0],
-			os.Args,
-			10,
-			make([]*Db, DEFAULT_DB_NUM),
-			DEFAULT_DB_NUM,
-			make(map[string]*Command),
-			make(map[string]*Command),
-			nowTime,
-			nowTime,
-			0,
-			0,
-			9988,
-			make([]string, CONFIG_BINDADDR_MAX),
-			0,
-			unixSocketPath,
-			nil,
-			nil,
-			make(map[int64]*Client),
-			nil,
-			//make([]ClientBufferLimitsConfig, CLIENT_TYPE_OBUF_COUNT),
-			0,
-			CONFIG_DEFAULT_MAX_CLIENTS,
-			true,
-			nil,
-			true,
-			CONFIG_DEFAULT_PROTO_MAX_BULK_LEN,
-			false,
-			time.Unix(0, 0),
-			0,
-			nil,
-			0,
-			0,
-			0,
-			0,
-			0,
-			false,
-			sync.RWMutex{},
-			CONFIG_DEFAULT_MAXMEMORY,
-			false,
-			make(chan struct{}, 1),
-			LL_DEBUG,
-			0 * time.Millisecond,
-			sync.WaitGroup{},
+			Pid:                  int64(pid),
+			PidFile:              pidFile,
+			ConfigFile:           configPath,
+			ExecFile:             os.Args[0],
+			ExecArgv:             os.Args,
+			Hz:                   10,
+			Dbs:                  make([]*Db, DEFAULT_DB_NUM),
+			DbNum:                DEFAULT_DB_NUM,
+			Commands:             make(map[string]*Command),
+			OrigCommands:         make(map[string]*Command),
+			UnixTime:             nowTime,
+			LruClock:             nowTime,
+			CronLoopCount:        0,
+			NextClientId:         0,
+			Port:                 9988,
+			BindAddrs:            make([]string, CONFIG_BINDADDR_MAX),
+			BindAddrCount:        0,
+			UnixSocketPath:       unixSocketPath,
+			CurrentClient:        nil,
+			Clients:              nil,
+			ClientsMap:           make(map[int64]*Client),
+			ClientMaxQueryBufLen: PROTO_INLINE_MAX_SIZE,
+			MaxClients:           CONFIG_DEFAULT_MAX_CLIENTS,
+			ProtectedMode:        true,
+			RequirePassword:      nil,
+			TcpKeepAlive:         true,
+			ProtoMaxBulkLen:      CONFIG_DEFAULT_PROTO_MAX_BULK_LEN,
+			ClientMaxIdleTime:    5 * time.Second,
+			Dirty:                0,
+			Shared:               nil,
+			StatRejectedConn:     0,
+			StatConnCount:        0,
+			StatNetOutputBytes:   0,
+			StatNetInputBytes:    0,
+			StatNumCommands:      0,
+			ConfigFlushAll:       false,
+			MaxMemory:            CONFIG_DEFAULT_MAXMEMORY,
+			Loading:              false,
+			LogLevel:             LL_DEBUG,
+			CloseCh:              make(chan struct{}, 1),
+			mutex:                sync.RWMutex{},
+			wg:                   sync.WaitGroup{},
 		}
 		for i := int64(0); i < s.DbNum; i++ {
 			s.Dbs = append(s.Dbs, CreateDb(i))
 		}
 		s.Clients = CreateSyncList()
-		s.ClientsToClose = CreateSyncList()
 		s.BindAddrs = append(s.BindAddrs, "0.0.0.0")
 		s.BindAddrCount++
 		CreateShared(&s)
@@ -841,7 +544,7 @@ func CreateServer() *Server {
 }
 
 func StartServer(s *Server) {
-	s.ServerLogDebugF("-->%v\n", "StartServer")
+	fmt.Println("StartServer")
 	if s == nil {
 		return
 	}
@@ -850,17 +553,19 @@ func StartServer(s *Server) {
 			go TcpServer(s, addr)
 		}
 	}
-	go UnixServer(s)
+	//go UnixServer(s)
 	go ServerCron(s)
 	go CloseServerListener(s)
 }
 
 func HandleSignal(s *Server) {
-	s.ServerLogDebugF("-->%v\n", "HandleSignal")
+	fmt.Println( "HandleSignal")
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	s.ServerLogDebugF("-->%v: <%v>\n", "Signal", <-c)
 	BroadcastCloseServer(s)
+	s.wg.Wait()
+	os.Exit(0)
 }
 
 func CloseServerListener(s *Server) {
@@ -870,12 +575,11 @@ func CloseServerListener(s *Server) {
 	case <-s.CloseCh:
 		fmt.Println("CloseServerListener ----> Close Server")
 		CloseServer(s)
-		return
 	}
 }
 
 func CloseServer(s *Server) {
-	s.ServerLogDebugF("-->%v\n", "CloseServer")
+	fmt.Println( "CloseServer")
 	// clear clients
 	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
@@ -883,6 +587,4 @@ func CloseServer(s *Server) {
 	}
 	defer os.Remove(s.UnixSocketPath)
 	defer os.Remove(s.PidFile)
-	s.wg.Wait()
-	os.Exit(0)
 }

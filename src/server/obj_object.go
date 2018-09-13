@@ -1,8 +1,6 @@
 package server
 
 import (
-	. "redigo/src/constant"
-	. "redigo/src/structure"
 	"time"
 )
 

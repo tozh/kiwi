@@ -1,7 +1,8 @@
 package server
 
-import "math/rand"
-import . "redigo/src/constant"
+import (
+	"math/rand"
+)
 
 type ZSkiplistNode struct {
 	Ele      string

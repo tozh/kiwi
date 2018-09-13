@@ -81,7 +81,6 @@ const CLIENT_REPLY_SKIP = 1 << 24      /* Don't send just this reply. */
 const CLIENT_LUA_DEBUG = 1 << 25       /* Run EVAL in debug mode. */
 const CLIENT_LUA_DEBUG_SYNC = 1 << 26  /* EVAL debugging without fork() */
 const CLIENT_MODULE = 1 << 27          /* Non connected client used by some module. */
-const CLIENT_CLOSING = 1 << 28
 
 /* Client request types */
 const PROTO_REQ_INLINE = 1

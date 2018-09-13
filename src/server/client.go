@@ -5,8 +5,8 @@ import (
 	"time"
 	"fmt"
 	"unsafe"
-	"bytes"
 	"sync"
+	"bytes"
 )
 
 type Client struct {
@@ -15,18 +15,16 @@ type Client struct {
 	Db              *Db
 	Name            string
 	QueryBuf        []byte // buffer use to accumulate client query
-	QueryBufSize	int64
-	QueryBufPeak    int64
+	QueryBufSize    int64
 	Argc            int64    // count of arguments
 	Argv            []string // arguments of current command
 	Cmd             *Command
-	LastCmd         *Command
-	Reply           *List
-	ReplySize       int64
+	ReplyBuf        []byte
+	ReplyBufSize    int64
+	ReplyList       *List
+	ReplyListSize   int64
 	CreateTime      time.Time
 	LastInteraction time.Time
-	Buf             []byte
-	BufPos          int64
 	SentLen         int64
 	Flags           int64
 	Node            *ListNode
@@ -37,7 +35,8 @@ type Client struct {
 	Authenticated   int64
 	CloseCh         chan struct{}
 	HeartBeatCh     chan int64
-	ReadCount int64
+	ReadCount       int64
+	MaxIdleTime     time.Duration
 	mutex           sync.RWMutex
 }
 
@@ -84,7 +83,7 @@ func (c *Client) GetNextClientId(s *Server) {
 }
 
 func (c *Client) HasPendingReplies() bool {
-	return c.BufPos != 0 || c.Reply.ListLength() != 0
+	return c.ReplyBufSize != 0 || c.ReplyList.ListLength() != 0
 }
 
 func (c *Client) Write(b []byte) (int64, error) {
@@ -143,7 +142,7 @@ func (c *Client) GetClientTypeName(ctype int64) string {
 func (c *Client) GetOutputBufferMemoryUsage() int64 {
 	listNodeSize := int64(unsafe.Sizeof(ListNode{}))
 	listSize := int64(unsafe.Sizeof(List{}))
-	return c.ReplySize + c.Reply.ListLength()*listNodeSize + listSize
+	return c.ReplyListSize + c.ReplyList.ListLength()*listNodeSize + listSize
 }
 
 // resetClient prepare the client to process the next command
@@ -176,13 +175,13 @@ func (c *Client) PrepareClientToWrite() int64 {
 	return C_OK
 }
 
-// functions for client
+//functions for client
 func CopyClientOutputBuffer(dst *Client, src *Client) {
-	dst.Reply.ListEmpty()
-	dst.Reply = DupList(src.Reply)
-	copy(dst.Buf, src.Buf[0:src.BufPos])
-	dst.BufPos = src.BufPos
-	dst.ReplySize = src.ReplySize
+	dst.ReplyList.ListEmpty()
+	dst.ReplyList = DupList(src.ReplyList)
+	copy(dst.ReplyBuf, src.ReplyBuf[0:src.ReplyBufSize])
+	dst.ReplyBufSize = src.ReplyBufSize
+	dst.ReplyListSize = src.ReplyListSize
 }
 
 func CatClientInfoString(s *Server, c *Client) string {
@@ -233,14 +232,47 @@ func CatClientInfoString(s *Server, c *Client) string {
 	flags.WriteByte('w')
 	flags.WriteByte(0)
 	cmd := "nil"
-	if c.Cmd != nil {
-		cmd = c.LastCmd.Name
-	}
-
 	clientFmt := "id=%d addr=%s conn=%s name=%s age=%d idle=%d flags=%s db=%d cmd=%s"
 	return fmt.Sprintf(clientFmt, c.Id, c.GetPeerId(s), c.Conn.LocalAddr().String(), c.Name, s.UnixTime.Sub(c.CreateTime).Nanoseconds()/1000,
 		s.UnixTime.Sub(c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.Id, cmd)
 }
 
-
-
+func CreateClient(s *Server, conn net.Conn, flags int64) *Client {
+	createTime := s.UnixTime
+	c := Client{
+		Id:              0,
+		Conn:            conn,
+		Name:            "",
+		QueryBuf:        make([]byte, s.ClientMaxQueryBufLen),
+		QueryBufSize:    0,
+		Argc:            0,                 // count of arguments
+		Argv:            make([]string, 0), // arguments of current command
+		Cmd:             nil,
+		ReplyBuf:        make([]byte, s.ClientMaxReplyBufLen),
+		ReplyBufSize:    0,
+		ReplyList:       CreateList(),
+		ReplyListSize:   0,
+		CreateTime:      createTime,
+		LastInteraction: createTime,
+		SentLen:         0,
+		Flags:           flags,
+		Node:            nil,
+		PeerId:          "",
+		RequestType:     0,
+		MultiBulkLen:    0,
+		BulkLen:         0,
+		Authenticated:   0,
+		CloseCh:         make(chan struct{}, 1),
+		HeartBeatCh:     nil,
+		ReadCount:       0,
+		MaxIdleTime:     0,
+		mutex:           sync.RWMutex{},
+	}
+	if !c.WithFlags(CLIENT_LUA) {
+		c.MaxIdleTime = s.ClientMaxIdleTime
+	}
+	c.GetNextClientId(s)
+	SelectDB(s, &c, 0)
+	LinkClient(s, &c)
+	return &c
+}

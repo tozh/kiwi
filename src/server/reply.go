@@ -7,51 +7,43 @@ import (
 	"bytes"
 )
 
-func (s *Server) AddReplyToBuffer(c *Client, str string) int64 {
-	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
-		return C_OK
-	}
-	if c.Reply.ListLength() > 0 {
+func AddReplyToBuffer(s *Server, c *Client, str string) int64 {
+	if c.ReplyList.ListLength() > 0 {
 		return C_ERR
 	}
-	available := cap(c.Buf)
+	available := len(c.ReplyBuf) - int(c.ReplyBufSize)
 	if len(str) > available {
 		return C_ERR
 	}
-	copy(c.Buf[c.BufPos:], str)
-	c.BufPos += int64(len(str))
+	copy(c.ReplyBuf[c.ReplyBufSize:], str)
+	c.ReplyBufSize += int64(len(str))
 	return C_OK
 }
 
-func (s *Server) AddReplyToList(c *Client, str string) {
-	if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
-		return
-	}
-	if c.Reply.ListLength() == 0 {
-		c.Reply.ListAddNodeTail(&str)
-		c.ReplySize += int64(len(str))
+func AddReplyToList(s *Server, c *Client, str string) {
+	if c.ReplyList.ListLength() == 0 {
+		c.ReplyList.ListAddNodeTail(&str)
+		c.ReplyListSize += int64(len(str))
 	} else {
-		ln := c.Reply.ListTail()
-		tail := *ln.Value.(*string)
-		if tail != "" && (len(tail) >= len(str) || len(tail)+len(str) < PROTO_REPLY_CHUNK_BYTES) {
+		node := c.ReplyList.ListTail()
+		tail := *node.Value.(*string)
+		if tail != "" && len(tail)+len(str) < int(s.ClientMaxReplyBufLen) {
 			tail = CatString(tail, str)
-			ln.Value = &tail
-			c.ReplySize += int64(len(str))
+			node.Value = &tail
+			c.ReplyListSize += int64(len(str))
 		} else {
-			c.Reply.ListAddNodeTail(&str)
-			c.ReplySize += int64(len(str))
+			c.ReplyList.ListAddNodeTail(&str)
+			c.ReplyListSize += int64(len(str))
 		}
-
 	}
-	//AsyncCloseClientOnOutputBufferLimitReached(s, c)
 }
 
 func AddReply(s *Server, c *Client, str string) {
 	if c.PrepareClientToWrite() != C_OK {
 		return
 	}
-	if s.AddReplyToBuffer(c, str) != C_OK {
-		s.AddReplyToList(c, str)
+	if AddReplyToBuffer(s, c, str) == C_ERR {
+		AddReplyToList(s, c, str)
 	}
 }
 

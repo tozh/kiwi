@@ -9,12 +9,15 @@ import (
 	"sync"
 	"io"
 	"time"
+	"bytes"
+	"bufio"
 )
 
 type accepted struct {
 	conn net.Conn
 	err  error
 }
+
 
 type Server struct {
 	CloseCh        chan struct{}
@@ -29,8 +32,8 @@ type Client struct {
 	CloseCh     chan struct{}
 	HeartBeatCh chan struct{}
 	Conn        net.Conn
-	ReadBuf     []byte
-	WriteBuf    []byte
+	ReadBuf     bytes.Buffer
+	Writer		*bufio.Writer
 	mutex       sync.RWMutex
 }
 
@@ -102,7 +105,6 @@ func CommonServer(s *Server, conn net.Conn) {
 }
 
 func ReadLoop(s *Server, c *Client) {
-
 	fmt.Println("ReadLoop")
 	s.wg.Add(1)
 	s.count++
@@ -180,26 +182,39 @@ func HeartBeating(s *Server, c *Client) {
 
 func ProcessClient(c *Client) {
 	fmt.Println("-->ProcessClient")
-	n, err := c.Conn.Read(c.ReadBuf)
-	if err != nil {
-		fmt.Println("ProcessClient:", err)
+
+	reader := bufio.NewReaderSize(c.Conn, 4)
+	for {
+		recieved, err := reader.ReadSlice(0)
+		fmt.Println("recieved----->", recieved)
 		if err == io.EOF {
 			fmt.Println("ProcessClient: EOF !!!!")
 			close(c.CloseCh)
+			return
 		}
-		return
+		if len(recieved) > 0 {
+			c.ReadBuf.Write(recieved)
+			if err == nil {
+				break
+			}
+		}
+
 	}
+
 	//c.HeartBeatCh <- struct{}{}
-	recieved := c.ReadBuf[:n]
-	fmt.Println("Server Recieved:", string(recieved))
-	c.WriteBuf = append([]byte("----->"), recieved...)
+	fmt.Println("Server Recieved:", c.ReadBuf.String())
 	WriteToClient(c)
 }
 
 func WriteToClient(c *Client) {
 	fmt.Println("-->WriteToClient")
-	fmt.Println("Server Send:", string(c.WriteBuf))
-	_, err := c.Conn.Write(c.WriteBuf)
+	c.Writer.Reset(c.Conn)
+	c.Writer.WriteString("----->")
+	c.Writer.Write(c.ReadBuf.Bytes())
+	c.Writer.WriteByte(0)
+	fmt.Println("Writer Size:",c.Writer.Size())
+	err := c.Writer.Flush()
+	c.ReadBuf.Reset()
 	if err != nil {
 		fmt.Println("WriteToClient:", err)
 		//close(c.CloseCh)
@@ -212,8 +227,8 @@ func CreateClient(conn net.Conn) *Client {
 		make(chan struct{}, 1),
 		make(chan struct{}, 1),
 		conn,
-		make([]byte, 4),
-		make([]byte, 4),
+		bytes.Buffer{},
+		bufio.NewWriter(conn),
 		sync.RWMutex{},
 	}
 }
