@@ -119,7 +119,8 @@ func CreateClient(s *Server, conn net.Conn) *Client {
 		BulkLen:         0,
 		Authenticated:   0,
 		CloseCh:         make(chan struct{}, 1),
-		HeartBeatCh:     make(chan struct{}, 1),
+		HeartBeatCh:     make(chan int64, 1),
+		ReadCount : 0,
 		mutex:           sync.RWMutex{},
 	}
 	c.GetNextClientId(s)
@@ -168,24 +169,24 @@ func CloseClient(s *Server, c *Client) {
 	close(c.CloseCh)
 }
 
-func CloseClientAsync(s *Server, c *Client) {
-	if c.WithFlags(CLIENT_CLOSE_ASAP) {
-		return
-	}
-	c.AddFlags(CLIENT_CLOSE_ASAP)
-	s.ClientsToClose.ListAddNodeTail(c)
-}
+//func CloseClientAsync(s *Server, c *Client) {
+//	if c.WithFlags(CLIENT_CLOSE_ASAP) {
+//		return
+//	}
+//	c.AddFlags(CLIENT_CLOSE_ASAP)
+//	s.ClientsToClose.ListAddNodeTail(c)
+//}
 
-func CloseClientsInAsyncList(s *Server) {
-	//s.ServerLogDebugF("-->%v\n", "CloseClientsInAsyncList")
-	for s.ClientsToClose.ListLength() != 0 {
-		ln := s.ClientsToClose.ListHead()
-		c := ln.Value.(*Client)
-		c.DeleteFlags(CLIENT_CLOSE_ASAP)
-		CloseClient(s, c)
-		s.ClientsToClose.ListDelNode(ln)
-	}
-}
+//func CloseClientsInAsyncList(s *Server) {
+//	//s.ServerLogDebugF("-->%v\n", "CloseClientsInAsyncList")
+//	for s.ClientsToClose.ListLength() != 0 {
+//		ln := s.ClientsToClose.ListHead()
+//		c := ln.Value.(*Client)
+//		c.DeleteFlags(CLIENT_CLOSE_ASAP)
+//		CloseClient(s, c)
+//		s.ClientsToClose.ListDelNode(ln)
+//	}
+//}
 
 func GetClientById(s *Server, id int64) *Client {
 	return s.ClientsMap[id]
@@ -414,7 +415,8 @@ func ReadFromClient(s *Server, c *Client) {
 	if err != nil {
 		return
 	}
-	c.HeartBeatCh <- struct{}{}
+	c.ReadCount++
+	c.HeartBeatCh <- c.ReadCount
 	c.QueryBufSize = int64(n)
 	if c.QueryBufPeak < c.QueryBufSize {
 		c.QueryBufPeak = c.QueryBufSize
@@ -693,7 +695,7 @@ func ServerCronHandler(s *Server) {
 	UpdateLRUClock(s)
 	ClientCron(s)
 	DbsCron(s)
-	CloseClientsInAsyncList(s)
+	//CloseClientsInAsyncList(s)
 	s.CronLoops++
 }
 
@@ -866,16 +868,14 @@ func StartServer(s *Server) {
 
 func CloseServer(s *Server) {
 	s.ServerLogDebugF("-->%v\n", "CloseServer")
-	CloseClientsInAsyncList(s)
+	//CloseClientsInAsyncList(s)
 
 	// clear clients
 	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
-		CloseClient(s, node.Value.(*Client))
+		BroadcastCloseClient(node.Value.(*Client))
 	}
 
-	//notify test_server is closed
-	close(s.CloseCh)
 	s.wg.Wait()
 	defer os.Remove(s.PidFile)
 }
@@ -887,3 +887,4 @@ func HandleSignal(s *Server) {
 	s.ServerLogDebugF("-->%v: <%v>\n", "Signal", <-c)
 	CloseServer(s)
 }
+

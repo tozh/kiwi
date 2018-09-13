@@ -107,12 +107,11 @@ NOTE: You only need to do one of the above things in order for the test_server t
 	}
 	c.AddFlags(flags)
 
-	go ReadLoop(s, c)
-	go CloseLoop(s, c)
+	go ProcessClientLoop(s, c)
+	go ClientCloseListener(s, c)
 }
 
-
-func ReadLoop(s* Server, c* Client) {
+func ProcessClientLoop(s *Server, c *Client) {
 	fmt.Println("ReadLoop")
 	s.wg.Add(1)
 	defer s.wg.Done()
@@ -125,32 +124,11 @@ func ReadLoop(s* Server, c* Client) {
 			fmt.Println("ReadLoop ----> Stop Client")
 			return
 		default:
-			c.HeartBeatCh = make(chan struct{}, 1)
+			c.HeartBeatCh = make(chan int64, 1)
+			// TODO 如果有问题，改成独立chan的
 			go HeartBeating(s, c)
 			ReadFromClient(s, c)
 			WriteToClient(s, c)
-		}
-	}
-}
-
-
-
-
-func CloseLoop(s* Server, c* Client) {
-	fmt.Println("CloseLoop")
-	s.wg.Add(1)
-	defer s.wg.Done()
-	for {
-		select {
-		case <-c.CloseCh:
-			if c.WithFlags(CLIENT_CLOSE_AFTER_REPLY) {
-				fmt.Println("CloseLoop ----> Stop Client Sync")
-				CloseClient(s, c)
-			} else {
-				fmt.Println("CloseLoop ----> Stop Client Async")
-				CloseClientAsync(s, c)
-			}
-			return
 		}
 	}
 }
@@ -161,13 +139,42 @@ func HeartBeating(s *Server, c *Client) {
 	defer s.wg.Done()
 	select {
 	case <-c.CloseCh:
-		fmt.Println("HeartBeating ----> Stop Client")
+		fmt.Println("HeartBeating ----> Close Client")
 		return
-	case <-c.HeartBeatCh:
-		fmt.Println("HearBeat OK")
+	case readCount := <-c.HeartBeatCh:
+		fmt.Printf("HearBeat OK --> %d\n", readCount)
 		return
-	case<-time.After(time.Second*3):
-		fmt.Println("HearBeatFail, 3s reached!!!")
-		close(c.CloseCh)
+	case <-time.After(time.Second * 3):
+		fmt.Println("HearBeat fail. 3s reached.")
+		BroadcastCloseClient(c)
+		return
+	}
+}
+
+func BroadcastCloseClient(c *Client) {
+	close(c.CloseCh)
+}
+
+func BroadcastCloseServer(s *Server) {
+	close(s.CloseCh)
+}
+
+func ServerCloseListener(s *Server) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+	select {
+	case <-s.CloseCh:
+		CloseServer(s)
+	}
+}
+
+func ClientCloseListener(s *Server, c *Client) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+	select {
+	case <-c.CloseCh:
+		fmt.Println("CloseLoop ----> Close Client Sync")
+		CloseClient(s, c)
+		return
 	}
 }

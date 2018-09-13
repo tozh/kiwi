@@ -38,7 +38,8 @@ type Client struct {
 	BulkLen         int64 // Length of bulk argument in multi bulk request.
 	Authenticated   int64
 	CloseCh         chan struct{}
-	HeartBeatCh     chan struct{}
+	HeartBeatCh     chan int64
+	ReadCount int64
 	mutex           sync.RWMutex
 }
 
@@ -242,3 +243,6 @@ func CatClientInfoString(s *Server, c *Client) string {
 	return fmt.Sprintf(clientFmt, c.Id, c.GetPeerId(s), c.Conn.LocalAddr().String(), c.Name, s.UnixTime.Sub(c.CreateTime).Nanoseconds()/1000,
 		s.UnixTime.Sub(c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.Id, cmd)
 }
+
+
+
