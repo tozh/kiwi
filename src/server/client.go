@@ -4,9 +4,9 @@ import (
 	"net"
 	"time"
 	"fmt"
-	"unsafe"
 	"sync"
 	"bytes"
+	"bufio"
 )
 
 type Client struct {
@@ -14,24 +14,18 @@ type Client struct {
 	Conn            net.Conn
 	Db              *Db
 	Name            string
-	QueryBuf        []byte // buffer use to accumulate client query
-	QueryBufSize    int64
+	QueryBuf        *Buffer
 	Argc            int64    // count of arguments
 	Argv            []string // arguments of current command
 	Cmd             *Command
-	ReplyBuf        []byte
-	ReplyBufSize    int64
-	ReplyList       *List
-	ReplyListSize   int64
+	ReplyWriter     *bufio.Writer
 	CreateTime      time.Time
 	LastInteraction time.Time
-	SentLen         int64
 	Flags           int64
 	Node            *ListNode
 	PeerId          string
 	RequestType     int64 // Request protocol type: PROTO_REQ_*
 	MultiBulkLen    int64 // Number of multi bulk arguments left to read.
-	BulkLen         int64 // Length of bulk argument in multi bulk request.
 	Authenticated   int64
 	CloseCh         chan struct{}
 	HeartBeatCh     chan int64
@@ -80,10 +74,6 @@ func (c *Client) GetNextClientId(s *Server) {
 	defer s.mutex.Unlock()
 	c.Id = s.NextClientId
 	s.NextClientId++
-}
-
-func (c *Client) HasPendingReplies() bool {
-	return c.ReplyBufSize != 0 || c.ReplyList.ListLength() != 0
 }
 
 func (c *Client) Write(b []byte) (int64, error) {
@@ -139,24 +129,13 @@ func (c *Client) GetClientTypeName(ctype int64) string {
 	}
 }
 
-func (c *Client) GetOutputBufferMemoryUsage() int64 {
-	listNodeSize := int64(unsafe.Sizeof(ListNode{}))
-	listSize := int64(unsafe.Sizeof(List{}))
-	return c.ReplyListSize + c.ReplyList.ListLength()*listNodeSize + listSize
-}
-
-// resetClient prepare the client to process the next command
+// resetClient for next query
 func (c *Client) Reset() {
 	c.ResetArgv()
 	c.RequestType = 0
 	c.MultiBulkLen = 0
-	c.BulkLen = 1
-
-	c.DeleteFlags(CLIENT_REPLY_SKIP)
-	if c.WithFlags(CLIENT_REPLY_SKIP_NEXT) {
-		c.AddFlags(CLIENT_REPLY_SKIP)
-		c.DeleteFlags(CLIENT_REPLY_SKIP_NEXT)
-	}
+	c.ReplyWriter.Reset(c.Conn)
+	c.QueryBuf.Reset()
 }
 
 func (c *Client) ResetArgv() {
@@ -173,15 +152,6 @@ func (c *Client) PrepareClientToWrite() int64 {
 		return C_ERR
 	}
 	return C_OK
-}
-
-//functions for client
-func CopyClientOutputBuffer(dst *Client, src *Client) {
-	dst.ReplyList.ListEmpty()
-	dst.ReplyList = DupList(src.ReplyList)
-	copy(dst.ReplyBuf, src.ReplyBuf[0:src.ReplyBufSize])
-	dst.ReplyBufSize = src.ReplyBufSize
-	dst.ReplyListSize = src.ReplyListSize
 }
 
 func CatClientInfoString(s *Server, c *Client) string {
@@ -243,24 +213,18 @@ func CreateClient(s *Server, conn net.Conn, flags int64) *Client {
 		Id:              0,
 		Conn:            conn,
 		Name:            "",
-		QueryBuf:        make([]byte, s.ClientMaxQueryBufLen),
-		QueryBufSize:    0,
+		QueryBuf:        &Buffer{},
 		Argc:            0,                 // count of arguments
 		Argv:            make([]string, 0), // arguments of current command
 		Cmd:             nil,
-		ReplyBuf:        make([]byte, s.ClientMaxReplyBufLen),
-		ReplyBufSize:    0,
-		ReplyList:       CreateList(),
-		ReplyListSize:   0,
+		ReplyWriter:     bufio.NewWriter(conn),
 		CreateTime:      createTime,
 		LastInteraction: createTime,
-		SentLen:         0,
 		Flags:           flags,
 		Node:            nil,
 		PeerId:          "",
 		RequestType:     0,
 		MultiBulkLen:    0,
-		BulkLen:         0,
 		Authenticated:   0,
 		CloseCh:         make(chan struct{}, 1),
 		HeartBeatCh:     nil,

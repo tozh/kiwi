@@ -7,44 +7,17 @@ import (
 	"bytes"
 )
 
-func AddReplyToBuffer(s *Server, c *Client, str string) int64 {
-	if c.ReplyList.ListLength() > 0 {
-		return C_ERR
-	}
-	available := len(c.ReplyBuf) - int(c.ReplyBufSize)
-	if len(str) > available {
-		return C_ERR
-	}
-	copy(c.ReplyBuf[c.ReplyBufSize:], str)
-	c.ReplyBufSize += int64(len(str))
-	return C_OK
-}
-
-func AddReplyToList(s *Server, c *Client, str string) {
-	if c.ReplyList.ListLength() == 0 {
-		c.ReplyList.ListAddNodeTail(&str)
-		c.ReplyListSize += int64(len(str))
-	} else {
-		node := c.ReplyList.ListTail()
-		tail := *node.Value.(*string)
-		if tail != "" && len(tail)+len(str) < int(s.ClientMaxReplyBufLen) {
-			tail = CatString(tail, str)
-			node.Value = &tail
-			c.ReplyListSize += int64(len(str))
-		} else {
-			c.ReplyList.ListAddNodeTail(&str)
-			c.ReplyListSize += int64(len(str))
-		}
-	}
-}
-
 func AddReply(s *Server, c *Client, str string) {
 	if c.PrepareClientToWrite() != C_OK {
 		return
 	}
-	if AddReplyToBuffer(s, c, str) == C_ERR {
-		AddReplyToList(s, c, str)
+	n, err := c.ReplyWriter.WriteString(str)
+	if err != nil {
+		return
 	}
+	s.mutex.Lock()
+	s.StatNetOutputBytes += int64(n)
+	s.mutex.Unlock()
 }
 
 func AddReplyStrObj(s *Server, c *Client, o *StrObject) {
@@ -100,7 +73,7 @@ func AddReplyIntWithPrifix(s *Server, c *Client, i int64, prefix byte) {
 	} else if prefix == '$' && i >= 0 && i < SHARED_BULKHDR_LEN {
 		AddReply(s, c, s.Shared.MultiBulkHDR[i])
 	} else {
-		str := strconv.FormatInt(i, 10)
+		str := strconv.Itoa(int(i))
 		buf := bytes.Buffer{}
 		buf.WriteByte(prefix)
 		buf.WriteString(str)
@@ -120,39 +93,37 @@ func AddReplyInt(s *Server, c *Client, i int64) {
 	}
 }
 
-func AddReplyMultiBulkLength(s *Server, c *Client, length int64) {
+func AddReplyMultiBulkLen(s *Server, c *Client, length int64) {
 	AddReplyIntWithPrifix(s, c, length, '*')
 }
 
 /* Create the length prefix of a bulk reply, example: $2234 */
-func AddReplyBulkLengthString(s *Server, c *Client, str string) {
+func AddReplyBulkLenOfStr(s *Server, c *Client, str string) {
 	length := int64(len(str))
 	AddReplyIntWithPrifix(s, c, length, '$')
 }
 
-func AddReplyBulkLengthStrObj(s *Server, c *Client, o *StrObject) {
+func AddReplyBulkLenOfStrObj(s *Server, c *Client, o *StrObject) {
 	if !CheckRType(o, OBJ_RTYPE_STR) {
 		return
 	}
 	str, err := GetStrObjectValueString(o)
 	if err == nil {
-		AddReplyBulkLengthString(s, c, str)
-	} else {
-		return
+		AddReplyBulkLenOfStr(s, c, str)
 	}
 }
 
-func AddReplyBulk(s *Server, c *Client, o *StrObject) {
-	AddReplyBulkLengthStrObj(s, c, o)
+func AddReplyBulkStrObj(s *Server, c *Client, o *StrObject) {
+	AddReplyBulkLenOfStrObj(s, c, o)
 	AddReplyStrObj(s, c, o)
 	AddReply(s, c, s.Shared.Crlf)
 }
 
-func AddReplyBulkString(s *Server, c *Client, str string) {
+func AddReplyBulkStr(s *Server, c *Client, str string) {
 	if str == "" {
 		AddReply(s, c, s.Shared.NullBulk)
 	} else {
-		AddReplyBulkLengthString(s, c, str)
+		AddReplyBulkLenOfStr(s, c, str)
 		AddReply(s, c, str)
 		AddReply(s, c, s.Shared.Crlf)
 	}
@@ -160,7 +131,7 @@ func AddReplyBulkString(s *Server, c *Client, str string) {
 
 func AddReplyBulkInt(s *Server, c *Client, i int64) {
 	str := strconv.FormatInt(i, 10)
-	AddReplyBulkString(s, c, str)
+	AddReplyBulkStr(s, c, str)
 }
 
 func AddReplySubcommandSyntaxError(s *Server, c *Client) {

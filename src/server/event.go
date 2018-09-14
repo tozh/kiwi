@@ -83,7 +83,9 @@ func CommonServer(s *Server, conn net.Conn, flags int64, ip string) {
 	if s.Clients.ListLength() > s.MaxClients {
 		err := []byte("-ERR max number of clients reached\r\n")
 		conn.Write(err)
+		s.mutex.Lock()
 		s.StatRejectedConn++
+		s.mutex.Unlock()
 		CloseClient(s, c)
 	}
 
@@ -108,25 +110,26 @@ NOTE: You only need to do one of the above things in order for the test_server t
 }
 
 func ProcessClientLoop(s *Server, c *Client) {
-	fmt.Println("ReadLoop")
+	fmt.Println("ProcessClientLoop")
 	s.wg.Add(1)
 	defer s.wg.Done()
 	for {
 		readCh := make(chan int64, 1)
 		if !c.WithFlags(CLIENT_LUA) && c.MaxIdleTime == 0 {
 			c.HeartBeatCh = make(chan int64, 1)
-			// TODO 如果有问题，改成独立chan的
 			go HeartBeating(s, c)
 		}
 		go ReadFromClient(s, c, readCh)
 		select {
 		case <-c.CloseCh:
 			fmt.Println("ReadLoop ----> Stop Client")
+			close(readCh)
 			return
 		case result := <-readCh:
 			if result == C_OK {
 				WriteToClient(s, c)
 			}
+			close(readCh)
 		}
 	}
 }
@@ -142,6 +145,7 @@ func HeartBeating(s *Server, c *Client) {
 		return
 	case readCount := <-c.HeartBeatCh:
 		fmt.Printf("HearBeat OK --> %d\n", readCount)
+		close(c.HeartBeatCh)
 		return
 	case <-time.After(c.MaxIdleTime):
 		fmt.Println("HearBeat fail. 3s reached.")

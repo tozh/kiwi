@@ -1,7 +1,7 @@
 package test
 
 import (
-	. "redigo/src/server"
+	. "KiwiDB/src/server"
 	"fmt"
 )
 

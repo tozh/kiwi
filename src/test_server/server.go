@@ -182,15 +182,17 @@ func HeartBeating(s *Server, c *Client) {
 
 func ProcessClient(c *Client) {
 	fmt.Println("-->ProcessClient")
-
-	reader := bufio.NewReaderSize(c.Conn, 4)
+	c.ReadBuf.Reset()
+	reader := bufio.NewReaderSize(c.Conn, 16)
 	for {
 		recieved, err := reader.ReadSlice(0)
-		fmt.Println("recieved----->", recieved)
-		if err == io.EOF {
-			fmt.Println("ProcessClient: EOF !!!!")
-			close(c.CloseCh)
-			return
+		fmt.Println("recieved----->", len(recieved))
+		if err != nil {
+			fmt.Println(err)
+			if err == io.EOF {
+				close(c.CloseCh)
+				return
+			}
 		}
 		if len(recieved) > 0 {
 			c.ReadBuf.Write(recieved)
@@ -198,9 +200,7 @@ func ProcessClient(c *Client) {
 				break
 			}
 		}
-
 	}
-
 	//c.HeartBeatCh <- struct{}{}
 	fmt.Println("Server Recieved:", c.ReadBuf.String())
 	WriteToClient(c)
@@ -209,16 +209,33 @@ func ProcessClient(c *Client) {
 func WriteToClient(c *Client) {
 	fmt.Println("-->WriteToClient")
 	c.Writer.Reset(c.Conn)
-	c.Writer.WriteString("----->")
-	c.Writer.Write(c.ReadBuf.Bytes())
-	c.Writer.WriteByte(0)
-	fmt.Println("Writer Size:",c.Writer.Size())
-	err := c.Writer.Flush()
-	c.ReadBuf.Reset()
+	nn := 0
+	n, err := c.Writer.WriteString("----->")
+	fmt.Println(">>>>>>>>>>>>", n)
 	if err != nil {
-		fmt.Println("WriteToClient:", err)
-		//close(c.CloseCh)
+		fmt.Println("WriteString ERROR", err)
 	}
+	nn += n
+	n, err = c.Writer.Write(c.ReadBuf.Bytes())
+	fmt.Println(">>>>>>>>>>>>", n)
+
+	if err != nil {
+		fmt.Println("WriteString ERROR", err)
+	}
+	nn += n
+	err = c.Writer.WriteByte(0)
+	if err != nil {
+		fmt.Println("WriteString ERROR", err)
+	}
+	nn += 1
+	fmt.Println(">>>>>>>>>>>>", 1)
+
+	fmt.Println("Writer Size:",nn)
+	err = c.Writer.Flush()
+	if err != nil {
+		fmt.Println("WriteString ERROR", err)
+	}
+	c.ReadBuf.Reset()
 }
 
 func CreateClient(conn net.Conn) *Client {
@@ -228,7 +245,7 @@ func CreateClient(conn net.Conn) *Client {
 		make(chan struct{}, 1),
 		conn,
 		bytes.Buffer{},
-		bufio.NewWriter(conn),
+		bufio.NewWriterSize(conn, 8),
 		sync.RWMutex{},
 	}
 }

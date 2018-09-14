@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"io"
 	"bytes"
+	"bufio"
+	"strings"
 )
 
 type Server struct {
@@ -96,12 +98,12 @@ func UnLinkClient(s *Server, c *Client) {
 
 func CloseClient(s *Server, c *Client) {
 	fmt.Println("CloseClient")
-	c.QueryBuf = nil
-	c.ReplyList.ListEmpty()
-	c.ReplyList = nil
+	c.QueryBuf.Reset()
+	c.ReplyWriter = nil
 	c.ResetArgv()
+	c.QueryBuf = nil
+	c.ReplyWriter = nil
 	UnLinkClient(s, c)
-	close(c.CloseCh)
 }
 
 func GetClientById(s *Server, id int64) *Client {
@@ -110,82 +112,43 @@ func GetClientById(s *Server, id int64) *Client {
 
 // Write data in output buffers to client.
 func WriteToClient(s *Server, c *Client) {
-	written := int64(0)
-	for c.HasPendingReplies() {
-		if c.ReplyBufSize > 0 {
-			n, err := c.Write(c.ReplyBuf[:c.ReplyBufSize])
-			if err == nil {
-				if n <= 0 {
-					break
-				}
-				c.SentLen += int64(n)
-				written += n
-			}
-			if c.SentLen == c.ReplyBufSize {
-				c.SentLen = 0
-				c.ReplyBufSize = 0
-			}
-		} else {
-			str := c.ReplyList.ListHead().Value.(*string)
-			length := int64(len(*str))
-			if length == 0 {
-				c.ReplyList.ListDelNode(c.ReplyList.ListHead())
-			}
-			n, err := c.Write([]byte(*str))
-			if err == nil {
-				if n <= 0 {
-					break
-				}
-				c.SentLen += int64(n)
-				written += n
-			}
-			if c.SentLen == length {
-				c.ReplyList.ListDelNode(c.ReplyList.ListHead())
-				c.SentLen = 0
-				c.ReplyListSize -= length
-				if c.ReplyList.ListLength() == 0 {
-					c.ReplyListSize = 0
-				}
-			}
-		}
-		if written > NET_MAX_WRITES_PER_EVENT {
-			break
-		}
+	c.ReplyWriter.WriteByte(0)
+	s.mutex.Lock()
+	s.StatNetOutputBytes++
+	s.mutex.Unlock()
+	err := c.ReplyWriter.Flush()
+	if err != nil {
+		return
 	}
-	s.StatNetOutputBytes += written
-	if written > 0 {
-		c.SetLastInteraction(s.UnixTime)
-	}
-	if !c.HasPendingReplies() {
-		c.SentLen = 0
-	}
+	c.SetLastInteraction(s.UnixTime)
+	c.Reset()
 }
 
 func ProcessInlineBuffer(s *Server, c *Client) int64 {
 	// Search for end of line
-	newline := IndexOfBytes(c.QueryBuf, 0, int(c.QueryBufSize), '\n')
-
+	queryBuf := c.QueryBuf.Bytes()
+	size := len(queryBuf)
+	newline := IndexOfBytes(queryBuf, 0, size, '\n')
 	if newline == -1 {
-		if c.QueryBufSize > s.ClientMaxQueryBufLen {
+		if int64(size) > s.ClientMaxQueryBufLen {
 			AddReplyError(s, c, "Protocol error: too big inline request")
-			SetProtocolError(s, c, "too big inline request", 0)
+			//SetProtocolError(s, c, "too big inline request", 0)
 		}
 		return C_ERR
 	}
-	if newline != 0 && newline != int(c.QueryBufSize) && c.QueryBuf[newline-1] == '\r' {
+	if newline != 0 && newline != size && queryBuf[newline-1] == '\r' {
 		// Handle the \r\n case.
 		newline--
 	}
 	/* Split the input buffer up to the \r\n */
-	argvs := SplitArgs(c.QueryBuf[0:newline])
+	argvs := SplitArgs(queryBuf[0:newline])
 	if argvs == nil {
 		AddReplyError(s, c, "Protocol error: unbalanced quotes in request")
-		SetProtocolError(s, c, "unbalanced quotes in inline request", 0)
+		//SetProtocolError(s, c, "unbalanced quotes in inline request", 0)
 		return C_ERR
 	}
 
 	// Leave data after the first line of the query in the buffer
-	//c.QueryBuf = c.QueryBuf[newline+2:]
 	if len(argvs) != 0 {
 		c.Argc = 0
 		c.Argv = make([]string, len(argvs))
@@ -200,82 +163,75 @@ func ProcessInlineBuffer(s *Server, c *Client) int64 {
 }
 
 func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
-	pos := 0
 	if c.Argc != 0 {
 		panic("c.Argc != 0")
 	}
 	if c.MultiBulkLen == 0 {
-		newline := IndexOfBytes(c.QueryBuf, 0, int(c.QueryBufSize), '\r')
-		if newline < 0 {
-			if c.QueryBufSize > s.ClientMaxQueryBufLen {
-				AddReplyError(s, c, "Protocol error: too big multibulk count request")
-				SetProtocolError(s, c, "too big multibulk request", 0)
-			}
+		star, err := c.QueryBuf.ReadByte()
+		if err != nil || star != '*' {
+			AddReplyError(s, c, fmt.Sprintf("Protocol error: expected '*', got '%c'", star))
+			//SetProtocolError(s, c, "expected $ but got something else", 0)
 			return C_ERR
 		}
-		if c.QueryBufSize-int64(newline) < 2 {
-			// end with \r\n, so \r cannot be the last char
+		bulkNumStr, err := c.QueryBuf.ReadStringExclude('\r')
+		if err != nil {
 			return C_ERR
 		}
-		if c.QueryBuf[0] != '*' {
-			return C_ERR
-		}
-		nulkNum, err := strconv.Atoi(string(c.QueryBuf[pos+1 : newline]))
-		if err != nil || nulkNum > 1024*1024 {
+
+		bulkNum, err := strconv.Atoi(bulkNumStr)
+		if err != nil || bulkNum > 1024*1024 {
 			AddReplyError(s, c, "Protocol error: invalid multibulk length")
-			SetProtocolError(s, c, "invalid multibulk length", 0)
+			//SetProtocolError(s, c, "invalid multibulk length", 0)
 			return C_ERR
 		}
-		// pos start of bulks
-		pos = newline + 2
-		if nulkNum <= 0 {
-			// null multibulk
+		if bulkNum <= 0 {
 			return C_OK
 		}
-		c.MultiBulkLen = int64(nulkNum)
+		c.QueryBuf.ReadByte() // pass the \n
+		c.MultiBulkLen = int64(bulkNum)
 		c.Argv = make([]string, c.MultiBulkLen)
 	}
 	if c.MultiBulkLen < 0 {
 		return C_ERR
 	}
 	for c.MultiBulkLen > 0 {
-		if c.BulkLen == -1 {
-			// Read bulk length if unknown
-			newline := IndexOfBytes(c.QueryBuf, pos, int(c.QueryBufSize), '\r')
-			if newline < 0 {
-				if c.QueryBufSize > s.ClientMaxQueryBufLen {
-					AddReplyError(s, c, "Protocol error: too big bulk count string")
-					SetProtocolError(s, c, "too big bulk count string", 0)
-					return C_ERR
-				}
-				break
-			}
-			if c.QueryBufSize-int64(newline) < 2 {
-				// end with \r\n, so \r cannot be the last char
-				break
-			}
-			if c.QueryBuf[pos] != '$' {
-				AddReplyError(s, c, fmt.Sprintf("Protocol error: expected '$', got '%c'", c.QueryBuf[pos]))
-				SetProtocolError(s, c, "expected $ but got something else", 0)
-				return C_ERR
-			}
-			nulkNum, err := strconv.Atoi(string(c.QueryBuf[pos+1 : newline]))
-			if err != nil || int64(nulkNum) > s.ProtoMaxBulkLen {
-				AddReplyError(s, c, "Protocol error: invalid bulk length")
-				SetProtocolError(s, c, "invalid bulk length", 0)
-				return C_ERR
-			}
-			pos = newline + 2
-			if c.QueryBufSize-int64(pos) < c.BulkLen+2 {
-				break
-			} else {
-				c.Argv = append(c.Argv, string(c.QueryBuf[pos:c.BulkLen]))
-				c.Argc++
-				pos += int(c.BulkLen + 2)
-				c.BulkLen = -1
-				c.MultiBulkLen--
-			}
+		// Read bulk length if unknown
+		dollar, err := c.QueryBuf.ReadByte()
+		if err != nil || dollar != '$' {
+			AddReplyError(s, c, fmt.Sprintf("Protocol error: expected '$', got '%c'", dollar))
+			//SetProtocolError(s, c, "expected $ but got something else", 0)
+			return C_ERR
 		}
+		bulkLenStr, err := c.QueryBuf.ReadStringExclude('\r')
+		if err != nil {
+			AddReplyError(s, c, fmt.Sprintf("Protocol error: invalid bulk length"))
+			//SetProtocolError(s, c, "invalid bulk length", 0)
+			return C_ERR
+		}
+		bulkLen, err := strconv.Atoi(bulkLenStr)
+		if err != nil || int64(bulkLen) > s.ProtoMaxBulkLen {
+			AddReplyError(s, c, "Protocol error: invalid bulk length")
+			//SetProtocolError(s, c, "invalid bulk length", 0)
+			return C_ERR
+		}
+		c.QueryBuf.ReadByte() // pass the \n
+
+		bulk := c.QueryBuf.Next(bulkLen)
+		if len(bulk) != bulkLen {
+			AddReplyError(s, c, "Protocol error: invalid bulk format")
+			//SetProtocolError(s, c, "invalid bulk format", 0)
+			return C_ERR
+		}
+		cr, _ := c.QueryBuf.ReadByte()
+		lf, _ := c.QueryBuf.ReadByte()
+		if cr != '\r' || lf != '\n' {
+			AddReplyError(s, c, "Protocol error: invalid bulk format")
+			//SetProtocolError(s, c, "invalid bulk format", 0)
+			return C_ERR
+		}
+		c.Argv = append(c.Argv, string(bulk))
+		c.Argc++
+		c.MultiBulkLen--
 	}
 	if c.MultiBulkLen == 0 {
 		return C_OK
@@ -283,83 +239,79 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 	return C_ERR
 }
 
-func ReadFromClient(s *Server, c *Client, readCh chan int64) {
-	n, err := c.Conn.Read(c.QueryBuf)
-	if err != nil {
-
-		if err == io.EOF {
-			fmt.Println("ReadFromClient: EOF !!!!")
+func ProcessInputBuffer(s *Server, c *Client) {
+	s.mutex.Lock()
+	s.CurrentClient = c
+	if c.RequestType == 0 {
+		firstByte, _ := c.QueryBuf.ReadByteNotGoForward()
+		if firstByte == '*' {
+			c.RequestType = PROTO_REQ_MULTIBULK
 		} else {
-			fmt.Println(err)
+			c.RequestType = PROTO_REQ_INLINE
 		}
-		BroadcastCloseClient(c)
-		readCh <- C_ERR
-		return
+	}
+	if c.RequestType == PROTO_REQ_INLINE {
+		if ProcessInlineBuffer(s, c) != C_OK {
+		}
+	} else if c.RequestType == PROTO_REQ_MULTIBULK {
+		if ProcessMultiBulkBuffer(s, c) != C_OK {
+		}
+	} else {
+		panic("Unknown request type")
+	}
+
+	if c.Argc != 0 {
+		ProcessCommand(s, c)
+	}
+	s.CurrentClient = nil
+	s.mutex.Unlock()
+}
+
+func ReadFromClient(s *Server, c *Client, readCh chan int64) {
+	reader := bufio.NewReaderSize(c.Conn, PROTO_IOBUF_LEN)
+	for {
+		recieved, err := reader.ReadSlice(0)
+		fmt.Println("recieved----->", len(recieved))
+		if err != nil {
+			fmt.Println(err)
+			if err == io.EOF {
+				readCh <- C_ERR
+				BroadcastCloseClient(c)
+				return
+			}
+		}
+		if len(recieved) > 0 {
+			c.QueryBuf.Write(recieved)
+		}
 	}
 	c.ReadCount++
 	if !c.WithFlags(CLIENT_LUA) && c.MaxIdleTime == 0 {
 		c.HeartBeatCh <- c.ReadCount
 	}
-	c.QueryBufSize = int64(n)
 	c.SetLastInteraction(s.UnixTime)
 	s.mutex.Lock()
-	s.StatNetInputBytes += c.QueryBufSize
+	s.StatNetInputBytes += int64(c.QueryBuf.Len())
 	s.mutex.Unlock()
-	if c.QueryBufSize > s.ClientMaxQueryBufLen {
-		BroadcastCloseClient(c)
-		readCh <- C_ERR
-		return
-	}
 	ProcessInputBuffer(s, c)
 	readCh <- C_OK
 }
 
-func ProcessInputBuffer(s *Server, c *Client) {
-	s.CurrentClient = c
-	for len(c.QueryBuf) != 0 {
-		if c.RequestType == 0 {
-			if c.QueryBuf[0] == '*' {
-				c.RequestType = PROTO_REQ_MULTIBULK
-			} else {
-				c.RequestType = PROTO_REQ_INLINE
-			}
-		}
-		if c.RequestType == PROTO_REQ_INLINE {
-			if ProcessInlineBuffer(s, c) != C_OK {
-				break
-			}
-		} else if c.RequestType == PROTO_REQ_MULTIBULK {
-			if ProcessMultiBulkBuffer(s, c) != C_OK {
-				break
-			}
-		} else {
-			panic("Unknown request type")
-		}
-		if c.Argc == 0 {
-			c.Reset()
-		} else {
-			ProcessCommand(s, c)
-			if s.CurrentClient == nil {
-				break
-			}
-		}
-	}
-	s.CurrentClient = nil
-}
-
 func Call(s *Server, c *Client) {
 	c.Cmd.Process(s, c)
+	s.mutex.Lock()
 	s.StatNumCommands++
+	s.mutex.Unlock()
 }
 
 func ProcessCommand(s *Server, c *Client) int64 {
-	c.Cmd = LookUpCommand(s, c.Argv[0])
+	cmdName := strings.ToLower(c.Argv[0])
+	c.Cmd = LookUpCommand(s, cmdName)
 	if c.Cmd == nil {
-		AddReplyError(s, c, fmt.Sprintf("unknown command '%s'", c.Argv[0]))
+		AddReplyError(s, c, fmt.Sprintf("unknown command '%s'", cmdName))
 		return C_OK
 	}
 	if (c.Cmd.Arity > 0 && c.Cmd.Arity != c.Argc) || c.Argc < -c.Cmd.Arity {
-		AddReplyError(s, c, fmt.Sprintf("wrong number of arguments for '%s' command", c.Argv[0]))
+		AddReplyError(s, c, fmt.Sprintf("wrong number of arguments for '%s' command", cmdName))
 		return C_OK
 	}
 	if s.RequirePassword != nil && c.Authenticated == 0 && &c.Cmd.Process != &AuthCommand {
@@ -374,21 +326,21 @@ func LookUpCommand(s *Server, name string) *Command {
 	return s.Commands[name]
 }
 
-func SetProtocolError(s *Server, c *Client, err string, pos int64) {
-	s.ServerLogErrorF("%s\n", err)
-	if s.LogLevel <= LL_INFO {
-		errorStr := fmt.Sprintf("Query buffer during protocol error: '%s'", c.QueryBuf)
-		buf := make([]byte, len(errorStr))
-		for i := 0; i < len(errorStr); i++ {
-			if strconv.IsPrint(rune(errorStr[i])) {
-				buf[i] = errorStr[i]
-			} else {
-				buf[i] = '.'
-			}
-		}
-		c.QueryBuf = c.QueryBuf[pos:]
-	}
-}
+//func SetProtocolError(s *Server, c *Client, err string, pos int64) {
+//	s.ServerLogErrorF("%s\n", err)
+//	if s.LogLevel <= LL_INFO {
+//		errorStr := fmt.Sprintf("Query buffer during protocol error: '%s'", c.QueryBuf)
+//		buf := make([]byte, len(errorStr))
+//		for i := 0; i < len(errorStr); i++ {
+//			if strconv.IsPrint(rune(errorStr[i])) {
+//				buf[i] = errorStr[i]
+//			} else {
+//				buf[i] = '.'
+//			}
+//		}
+//		c.QueryBuf = c.QueryBuf[pos:]
+//	}
+//}
 
 func GetAllClientInfoString(s *Server, ctype int64) string {
 	str := bytes.Buffer{}
@@ -458,7 +410,7 @@ func ServerCron(s *Server) {
 
 func ServerExists() (int, error) {
 	fmt.Printf("-->%v\n", "ServerExists")
-	if redigoPidFile, err1 := os.Open(os.TempDir() + "redigo.pid"); err1 == nil {
+	if redigoPidFile, err1 := os.Open(os.TempDir() + "KiwiDB.pid"); err1 == nil {
 		defer redigoPidFile.Close()
 		if pidStr, err2 := ioutil.ReadAll(redigoPidFile); err2 == nil {
 			if pid, err3 := strconv.Atoi(string(pidStr)); err3 == nil {
@@ -473,8 +425,8 @@ func ServerExists() (int, error) {
 
 func CreateServer() *Server {
 	fmt.Println("CreateServer")
-	pidFile := os.TempDir() + "redigo.pid"
-	unixSocketPath := os.TempDir() + "redigo.sock"
+	pidFile := os.TempDir() + "KiwiDB.pid"
+	unixSocketPath := os.TempDir() + "KiwiDB.sock"
 	if pid, err1 := ServerExists(); err1 == nil {
 		pid = os.Getpid()
 		if redigoPidFile, err2 := os.Create(pidFile); err2 == nil {
@@ -559,7 +511,7 @@ func StartServer(s *Server) {
 }
 
 func HandleSignal(s *Server) {
-	fmt.Println( "HandleSignal")
+	fmt.Println("HandleSignal")
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	s.ServerLogDebugF("-->%v: <%v>\n", "Signal", <-c)
@@ -579,7 +531,7 @@ func CloseServerListener(s *Server) {
 }
 
 func CloseServer(s *Server) {
-	fmt.Println( "CloseServer")
+	fmt.Println("CloseServer")
 	// clear clients
 	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	for node := iter.ListNext(); node != nil; node = iter.ListNext() {

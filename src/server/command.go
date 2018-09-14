@@ -263,7 +263,7 @@ func GetGenericCommand(s *Server, c *Client) int64 {
 		AddReply(s, c, s.Shared.WrongTypeErr)
 		return C_ERR
 	} else {
-		AddReplyBulk(s, c, o.(*StrObject))
+		AddReplyBulkStrObj(s, c, o.(*StrObject))
 		return C_OK
 	}
 }
@@ -321,7 +321,7 @@ var MSetNxCommand CommandProcess = func(s *Server, c *Client) {
 }
 
 var MGetCommand CommandProcess = func(s *Server, c *Client) {
-	AddReplyMultiBulkLength(s, c, c.Argc-1)
+	AddReplyMultiBulkLen(s, c, c.Argc-1)
 	for j := 1; j < len(c.Argv); j++ {
 		o := c.Db.Get(c.Argv[j]).(*StrObject)
 		if o == nil {
@@ -330,7 +330,7 @@ var MGetCommand CommandProcess = func(s *Server, c *Client) {
 			if !CheckRType(o, OBJ_RTYPE_STR) {
 				AddReply(s, c, s.Shared.NullBulk)
 			} else {
-				AddReplyBulk(s, c, o)
+				AddReplyBulkStrObj(s, c, o)
 			}
 		}
 	}
@@ -387,6 +387,6 @@ var RandomKeyCommand CommandProcess = func(s *Server, c *Client) {
 	if key == "" && value == nil {
 		AddReply(s, c, s.Shared.NullBulk)
 	} else {
-		AddReplyBulkString(s, c, key)
+		AddReplyBulkStr(s, c, key)
 	}
 }

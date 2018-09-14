@@ -323,9 +323,9 @@ func HexDigitToInt(b byte) byte {
 	}
 }
 
-func IndexOfBytes(bytes []byte, start int, end int, target byte) int {
+func IndexOfBytes(buf []byte, start int, end int, target byte) int {
 	for i := start; i<end; i++ {
-		if bytes[i] == target {
+		if buf[i] == target {
 			return i
 		}
 	}
