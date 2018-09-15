@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"strings"
 	"fmt"
-	"bytes"
 )
 
 func AddReply(s *Server, c *Client, str string) {
@@ -13,15 +12,21 @@ func AddReply(s *Server, c *Client, str string) {
 	}
 	n, err := c.ReplyWriter.WriteString(str)
 	if err != nil {
+		// fmt.Println(err)
 		return
 	}
+	// fmt.Println("Writer OK")
+
 	s.mutex.Lock()
-	s.StatNetOutputBytes += int64(n)
+	// fmt.Println("Lock Got")
+	s.StatNetOutputBytes += n
 	s.mutex.Unlock()
+	// fmt.Println("AddReply OK")
+
 }
 
 func AddReplyStrObj(s *Server, c *Client, o *StrObject) {
-	if !CheckRType(o, OBJ_RTYPE_STR) {
+	if !CheckOType(o, OBJ_RTYPE_STR) {
 		return
 	}
 	str, err := GetStrObjectValueString(o)
@@ -64,26 +69,25 @@ func (s *Server) AddReplyStatusFormat(c *Client, format string, a ...interface{}
 //	}
 //}
 
-func AddReplyIntWithPrifix(s *Server, c *Client, i int64, prefix byte) {
+func AddReplyIntWithPrifix(s *Server, c *Client, i int, prefix byte) {
 	/* Things like $3\r\n or *2\r\n are emitted very often by the protocol
 	so we have a few shared objects to use if the integer is small
 	like it is most of the times. */
 	if prefix == '*' && i >= 0 && i < SHARED_BULKHDR_LEN {
 		AddReply(s, c, s.Shared.MultiBulkHDR[i])
 	} else if prefix == '$' && i >= 0 && i < SHARED_BULKHDR_LEN {
-		AddReply(s, c, s.Shared.MultiBulkHDR[i])
+		AddReply(s, c, s.Shared.BulkHDR[i])
 	} else {
-		str := strconv.Itoa(int(i))
-		buf := bytes.Buffer{}
+		str := strconv.Itoa(i)
+		buf := Buffer{}
 		buf.WriteByte(prefix)
 		buf.WriteString(str)
-		buf.WriteByte('\r')
-		buf.WriteByte('\n')
+		buf.WriteString("\r\n")
 		AddReply(s, c, buf.String())
 	}
 }
 
-func AddReplyInt(s *Server, c *Client, i int64) {
+func AddReplyInt(s *Server, c *Client, i int) {
 	if i == 0 {
 		AddReply(s, c, s.Shared.Zero)
 	} else if i == 1 {
@@ -93,29 +97,29 @@ func AddReplyInt(s *Server, c *Client, i int64) {
 	}
 }
 
-func AddReplyMultiBulkLen(s *Server, c *Client, length int64) {
+func AddReplyMultiBulkLen(s *Server, c *Client, length int) {
 	AddReplyIntWithPrifix(s, c, length, '*')
 }
 
 /* Create the length prefix of a bulk reply, example: $2234 */
 func AddReplyBulkLenOfStr(s *Server, c *Client, str string) {
-	length := int64(len(str))
+	length := len(str)
+	// fmt.Println(">>>>>>>>>>>>>>>>", length)
 	AddReplyIntWithPrifix(s, c, length, '$')
 }
 
-func AddReplyBulkLenOfStrObj(s *Server, c *Client, o *StrObject) {
-	if !CheckRType(o, OBJ_RTYPE_STR) {
+func AddReplyBulkStrObj(s *Server, c *Client, o *StrObject) {
+	if !CheckOType(o, OBJ_RTYPE_STR) {
 		return
 	}
 	str, err := GetStrObjectValueString(o)
+	// fmt.Println(">>>>>>>>>>>>>>>>", str)
 	if err == nil {
 		AddReplyBulkLenOfStr(s, c, str)
+	} else {
+		return
 	}
-}
-
-func AddReplyBulkStrObj(s *Server, c *Client, o *StrObject) {
-	AddReplyBulkLenOfStrObj(s, c, o)
-	AddReplyStrObj(s, c, o)
+	AddReply(s, c, str)
 	AddReply(s, c, s.Shared.Crlf)
 }
 
@@ -129,8 +133,8 @@ func AddReplyBulkStr(s *Server, c *Client, str string) {
 	}
 }
 
-func AddReplyBulkInt(s *Server, c *Client, i int64) {
-	str := strconv.FormatInt(i, 10)
+func AddReplyBulkInt(s *Server, c *Client, i int) {
+	str := strconv.Itoa(i)
 	AddReplyBulkStr(s, c, str)
 }
 

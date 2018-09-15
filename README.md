@@ -1,5 +1,5 @@
 
-Redigo Stage 1:
+Kiwi Stage 1:
 Mono-machine version redis, with zset(skiplist version), list(linkedlist), kv, hash and set.
 The string is the original go str.
 
@@ -15,7 +15,7 @@ progress:
 5. hash
 6. zset
 
-Redigo Stage 2:
+Kiwi Stage 2:
 LRU
 log
 idle time
@@ -23,7 +23,7 @@ persistence rdb
 persistence aof
 
 
-Redigo Stage 3:
+Kiwi Stage 3:
 ziplist
 intset
 quicklist

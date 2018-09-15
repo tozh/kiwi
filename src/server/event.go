@@ -2,7 +2,6 @@ package server
 
 import (
 	"net"
-	"fmt"
 	"time"
 )
 
@@ -12,7 +11,7 @@ type accepted struct {
 }
 
 func UnixServer(s *Server) {
-	fmt.Println("------>UnixServer")
+	// fmt.Println("------>UnixServer")
 	s.wg.Add(1)
 	defer s.wg.Done()
 	listener := AnetListenUnix(s.UnixSocketPath)
@@ -27,23 +26,23 @@ func UnixServer(s *Server) {
 		}()
 		select {
 		case <-s.CloseCh:
-			s.ServerLogDebugF("-->%v\n", "UnixServer ------ SHUTDOWN")
+			// s.ServerLogDebugF("-->%v\n", "UnixServer ------ SHUTDOWN")
 			listener.Close()
 			return
 		case acc := <-ch:
 			if acc.err != nil {
-				s.ServerLogDebugF("-->%v\n", "UnixServer ------ Accept Error")
+				// s.ServerLogDebugF("-->%v\n", "UnixServer ------ Accept Error")
 				AnetSetErrorFormat("Unix Accept error: %s", acc.err)
 				continue
 			}
-			s.ServerLogDebugF("-->%v\n", "UnixServer ------ CommonServer")
+			// s.ServerLogDebugF("-->%v\n", "UnixServer ------ CommonServer")
 			CommonServer(s, acc.conn, CLIENT_UNIX_SOCKET, "")
 		}
 	}
 }
 
 func TcpServer(s *Server, ip string) {
-	fmt.Println("------>TcpServer")
+	// fmt.Println("------>TcpServer")
 	s.wg.Add(1)
 	defer s.wg.Done()
 	listener := AnetListenTcp("tcp", ip, s.Port)
@@ -59,22 +58,22 @@ func TcpServer(s *Server, ip string) {
 		}()
 		select {
 		case <-s.CloseCh:
-			s.ServerLogDebugF("-->%v\n", "TcpServer ------ SHUTDOWN")
+			// s.ServerLogDebugF("-->%v\n", "TcpServer ------ SHUTDOWN")
 			listener.Close()
 			return
 		case acc := <-ch:
 			if acc.err != nil {
-				s.ServerLogDebugF("-->%v\n", "TcpServer ------ Accept Error")
+				// s.ServerLogDebugF("-->%v\n", "TcpServer ------ Accept Error")
 				AnetSetErrorFormat("Tcp Accept error: %s", acc.err)
 				continue
 			}
-			s.ServerLogDebugF("-->%v\n", "TcpServer ------ CommonServer")
+			// s.ServerLogDebugF("-->%v\n", "TcpServer ------ CommonServer")
 			CommonServer(s, acc.conn, 0, ip)
 		}
 	}
 }
 
-func CommonServer(s *Server, conn net.Conn, flags int64, ip string) {
+func CommonServer(s *Server, conn net.Conn, flags int, ip string) {
 	c := CreateClient(s, conn, flags)
 	if c == nil {
 		conn.Close()
@@ -110,23 +109,24 @@ NOTE: You only need to do one of the above things in order for the test_server t
 }
 
 func ProcessClientLoop(s *Server, c *Client) {
-	fmt.Println("ProcessClientLoop")
+	// fmt.Println("ProcessClientLoop")
 	s.wg.Add(1)
 	defer s.wg.Done()
 	for {
-		readCh := make(chan int64, 1)
+		readCh := make(chan int, 1)
 		if !c.WithFlags(CLIENT_LUA) && c.MaxIdleTime == 0 {
-			c.HeartBeatCh = make(chan int64, 1)
+			c.HeartBeatCh = make(chan int, 1)
 			go HeartBeating(s, c)
 		}
 		go ReadFromClient(s, c, readCh)
 		select {
 		case <-c.CloseCh:
-			fmt.Println("ReadLoop ----> Stop Client")
+			// fmt.Println("ReadLoop ----> Stop Client")
 			close(readCh)
 			return
 		case result := <-readCh:
 			if result == C_OK {
+				// fmt.Println("readCh ok")
 				WriteToClient(s, c)
 			}
 			close(readCh)
@@ -135,20 +135,23 @@ func ProcessClientLoop(s *Server, c *Client) {
 }
 
 func HeartBeating(s *Server, c *Client) {
-	fmt.Println("HeartBeatLoop")
+	// fmt.Println("HeartBeatLoop")
 	s.wg.Add(1)
 	defer s.wg.Done()
 	select {
 	case <-c.CloseCh:
-		fmt.Println("HeartBeating ----> Close Client")
+		// fmt.Println("HeartBeating ----> Close Client")
 		close(c.HeartBeatCh)
 		return
-	case readCount := <-c.HeartBeatCh:
-		fmt.Printf("HearBeat OK --> %d\n", readCount)
+	//case readCount := <-c.HeartBeatCh:
+	//	fmt.Printf("HearBeat OK --> %d\n", readCount)
+	//	close(c.HeartBeatCh)
+	//	return
+	case <-c.HeartBeatCh:
 		close(c.HeartBeatCh)
 		return
 	case <-time.After(c.MaxIdleTime):
-		fmt.Println("HearBeat fail. 3s reached.")
+		// fmt.Println("HearBeat fail. 3s reached.")
 		close(c.HeartBeatCh)
 		BroadcastCloseClient(c)
 		return
@@ -160,6 +163,7 @@ func BroadcastCloseClient(c *Client) {
 }
 
 func BroadcastCloseServer(s *Server) {
+	// fmt.Println("BroadcastCloseServer")
 	close(s.CloseCh)
 }
 
@@ -168,7 +172,7 @@ func CloseClientListener(s *Server, c *Client) {
 	defer s.wg.Done()
 	select {
 	case <-c.CloseCh:
-		fmt.Println("CloseClientListener ----> Close Client")
+		// fmt.Println("CloseClientListener ----> Close Client")
 		CloseClient(s, c)
 		return
 	}

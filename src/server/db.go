@@ -7,13 +7,13 @@ import (
 
 type Db struct {
 	Dict  map[string]Objector
-	Id    int64
+	Id    int
 	mutex sync.RWMutex
 }
 
 func getStrByStrObject(key *StrObject) string {
 	if key.Encoding == OBJ_ENCODING_INT {
-		return strconv.FormatInt(*key.Value.(*int64), 10)
+		return strconv.Itoa(*key.Value.(*int))
 	} else {
 		return *key.Value.(*string)
 	}
@@ -73,10 +73,10 @@ func (db *Db) Exist(key string) bool {
 	return value != nil
 }
 
-func (db *Db) Size() int64 {
+func (db *Db) Size() int {
 	db.mutex.Lock()
 	defer db.mutex.RUnlock()
-	return int64(len(db.Dict))
+	return len(db.Dict)
 }
 
 func (db *Db) FlushAll() {
@@ -85,7 +85,7 @@ func (db *Db) FlushAll() {
 	db.mutex.Unlock()
 }
 
-func CreateDb(id int64) *Db {
+func CreateDb(id int) *Db {
 	return &Db{
 		make(map[string]Objector),
 		id,

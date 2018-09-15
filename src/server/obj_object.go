@@ -5,15 +5,15 @@ import (
 )
 
 type Object struct {
-	RType    int64
-	Encoding int64
+	OType    byte
+	Encoding byte
 	Lru      time.Time
-	//RefConut int64
+	//RefConut int
 }
 
 type IntObject struct {
 	Object
-	Value *int64
+	Value *int
 }
 
 type ListObject struct {
@@ -37,27 +37,27 @@ type SetObject struct {
 }
 
 type Objector interface {
-	getRType() int64
-	getRTypeInString() string
-	setRType(rtype int64)
-	getEncode() int64
-	setEncode(encode int64)
+	getOType() byte
+	getOTypeInString() string
+	setOType(otype byte)
+	getEncode() byte
+	setEncode(encode byte)
 	getEncodeInString() string
 	getLRU() time.Time
 	setLRU(lru time.Time)
-	//getRefCount() int64
-	//setRefCount(refCount int64)
-	//IncrRefCount() int64
-	//DecrRefCount() int64
+	//getRefCount() int
+	//setRefCount(refCount int)
+	//IncrRefCount() int
+	//DecrRefCount() int
 	RefreshLRUClock(s *Server)
 }
 
-func (o *Object) getRType() int64 {
-	return o.RType
+func (o *Object) getOType() byte {
+	return o.OType
 }
 
-func (o *Object) getRTypeInString() string {
-	switch o.RType {
+func (o *Object) getOTypeInString() string {
+	switch o.OType {
 	case OBJ_RTYPE_STR:
 		return "string"
 	case OBJ_RTYPE_INT:
@@ -75,11 +75,11 @@ func (o *Object) getRTypeInString() string {
 	}
 }
 
-func (o *Object) setRType(rtype int64) {
-	o.RType = rtype
+func (o *Object) setOType(otype byte) {
+	o.OType = otype
 }
 
-func (o *Object) getEncode() int64 {
+func (o *Object) getEncode() byte {
 	return o.Encoding
 }
 
@@ -104,7 +104,7 @@ func (o *Object) getEncodeInString() string {
 	}
 }
 
-func (o *Object) setEncode(encode int64) {
+func (o *Object) setEncode(encode byte) {
 	o.Encoding = encode
 }
 
@@ -116,22 +116,22 @@ func (o *Object) setLRU(lru time.Time) {
 	o.Lru = lru
 }
 
-//func (o *Object) getRefCount() int64 {
+//func (o *Object) getRefCount() int {
 //	return o.RefConut
 //}
 //
-//func (o *Object) setRefCount(refCount int64) {
+//func (o *Object) setRefCount(refCount int) {
 //	o.RefConut = refCount
 //}
 //
-//func (o *Object) IncrRefCount() int64 {
+//func (o *Object) IncrRefCount() int {
 //	if o.RefConut != math.MaxInt64 {
 //		o.RefConut--
 //	}
 //	return o.RefConut
 //}
 //
-//func (o *Object) DecrRefCount() int64 {
+//func (o *Object) DecrRefCount() int {
 //	if o.RType == OBJ_RTYPE_STR || o.RType == OBJ_RTYPE_INT {
 //		if o.RefConut <= 0 {
 //			panic("DecrRefCount against refcount <= 0")
@@ -148,9 +148,9 @@ func (o *Object) RefreshLRUClock(s *Server) {
 }
 
 /* functions for Objects */
-func CreateObject(s *Server, rtype int64, encoding int64) Object {
+func CreateObject(s *Server, otype byte, encoding byte) Object {
 	obj := Object{
-		RType:    rtype,
+		OType:    otype,
 		Encoding: encoding,
 		Lru:      LruClock(s),
 		//RefConut: 1,
@@ -159,6 +159,6 @@ func CreateObject(s *Server, rtype int64, encoding int64) Object {
 }
 
 
-func CheckRType(o Objector, rtype int64) bool {
-	return o != nil && o.(*Object).RType == rtype
+func CheckOType(o Objector, otype byte) bool {
+	return o != nil && o.getOType() == otype
 }

@@ -5,31 +5,30 @@ import (
 	"time"
 	"fmt"
 	"sync"
-	"bytes"
 	"bufio"
 )
 
 type Client struct {
-	Id              int64
+	Id              int
 	Conn            net.Conn
 	Db              *Db
 	Name            string
-	QueryBuf        *Buffer
-	Argc            int64    // count of arguments
+	QueryBuf        *LargeBuffer
+	Argc            int    // count of arguments
 	Argv            []string // arguments of current command
 	Cmd             *Command
 	ReplyWriter     *bufio.Writer
 	CreateTime      time.Time
 	LastInteraction time.Time
-	Flags           int64
+	Flags           int
 	Node            *ListNode
 	PeerId          string
-	RequestType     int64 // Request protocol type: PROTO_REQ_*
-	MultiBulkLen    int64 // Number of multi bulk arguments left to read.
-	Authenticated   int64
+	RequestType     int // Request protocol type: PROTO_REQ_*
+	MultiBulkLen    int // Number of multi bulk arguments left to read.
+	Authenticated   int
 	CloseCh         chan struct{}
-	HeartBeatCh     chan int64
-	ReadCount       int64
+	HeartBeatCh     chan int
+	ReadCount       int
 	MaxIdleTime     time.Duration
 	mutex           sync.RWMutex
 }
@@ -42,15 +41,15 @@ func (c *Client) SetLastInteraction(time time.Time) {
 	c.LastInteraction = time
 }
 
-func (c *Client) WithFlags(flags int64) bool {
+func (c *Client) WithFlags(flags int) bool {
 	return c.Flags&flags != 0
 }
 
-func (c *Client) AddFlags(flags int64) {
+func (c *Client) AddFlags(flags int) {
 	c.Flags |= flags
 }
 
-func (c *Client) DeleteFlags(flags int64) {
+func (c *Client) DeleteFlags(flags int) {
 	c.Flags &= ^flags
 }
 
@@ -76,17 +75,17 @@ func (c *Client) GetNextClientId(s *Server) {
 	s.NextClientId++
 }
 
-func (c *Client) Write(b []byte) (int64, error) {
+func (c *Client) Write(b []byte) (int, error) {
 	n, err := c.Conn.Write(b)
-	return int64(n), err
+	return int(n), err
 }
 
-func (c *Client) Read(b []byte) (int64, error) {
+func (c *Client) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
-	return int64(n), err
+	return int(n), err
 }
 
-func (c *Client) GetClientType() int64 {
+func (c *Client) GetClientType() int {
 	if c.WithFlags(CLIENT_MASTER) {
 		return CLIENT_TYPE_MASTER
 	}
@@ -99,7 +98,7 @@ func (c *Client) GetClientType() int64 {
 	return CLIENT_TYPE_NORMAL
 }
 
-func (c *Client) GetClientTypeByName(name string) int64 {
+func (c *Client) GetClientTypeByName(name string) int {
 	switch name {
 	case "normal":
 		return CLIENT_TYPE_NORMAL
@@ -114,7 +113,7 @@ func (c *Client) GetClientTypeByName(name string) int64 {
 	}
 }
 
-func (c *Client) GetClientTypeName(ctype int64) string {
+func (c *Client) GetClientTypeName(ctype int) string {
 	switch ctype {
 	case CLIENT_TYPE_NORMAL:
 		return "normal"
@@ -144,18 +143,24 @@ func (c *Client) ResetArgv() {
 	c.Argv = nil
 }
 
-func (c *Client) PrepareClientToWrite() int64 {
+func (c *Client) PrepareClientToWrite() int {
+	// fmt.Println("PrepareClientToWrite")
+
 	if c.WithFlags(CLIENT_REPLY_OFF | CLIENT_REPLY_SKIP) {
+		// fmt.Println("PrepareClientToWrite111111")
 		return C_ERR
 	}
 	if c.Conn == nil {
+		// fmt.Println("PrepareClientToWrite222222")
 		return C_ERR
 	}
+	// fmt.Println("PrepareClientToWrite-------OK")
+
 	return C_OK
 }
 
 func CatClientInfoString(s *Server, c *Client) string {
-	flags := bytes.Buffer{}
+	flags := Buffer{}
 	if c.WithFlags(CLIENT_SLAVE) {
 		if c.WithFlags(CLIENT_MONITOR) {
 			flags.WriteByte('O')
@@ -207,13 +212,13 @@ func CatClientInfoString(s *Server, c *Client) string {
 		s.UnixTime.Sub(c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.Id, cmd)
 }
 
-func CreateClient(s *Server, conn net.Conn, flags int64) *Client {
+func CreateClient(s *Server, conn net.Conn, flags int) *Client {
 	createTime := s.UnixTime
 	c := Client{
 		Id:              0,
 		Conn:            conn,
 		Name:            "",
-		QueryBuf:        &Buffer{},
+		QueryBuf:        &LargeBuffer{},
 		Argc:            0,                 // count of arguments
 		Argv:            make([]string, 0), // arguments of current command
 		Cmd:             nil,

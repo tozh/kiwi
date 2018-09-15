@@ -50,13 +50,13 @@ func (iter *listIter) ListRewindTail(list *List) {
 type List struct {
 	Head  *ListNode
 	Tail  *ListNode
-	Len   int64
+	Len   int
 	Match func(value interface{}, key interface{}) bool
 }
 
 
 /* List methods */
-func (list *List) ListLength() int64 {
+func (list *List) ListLength() int {
 	return list.Len
 }
 

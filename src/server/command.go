@@ -7,21 +7,21 @@ import (
 )
 
 type CommandProcess func(s *Server, c *Client)
-type CommandGetKeysProcess func(cmd *Command, argv []string, argc int64, numkeys []int64)
+type CommandGetKeysProcess func(cmd *Command, argv []string, argc int, numkeys []int)
 
 type Command struct {
 	Name          string
 	Process       CommandProcess
-	Arity         int64 // -N means >= N, N means = N
+	Arity         int // -N means >= N, N means = N
 	CharFlags     string
-	Flags         int64
+	Flags         int
 	GetKeyProcess CommandGetKeysProcess
 	/* What keys should be loaded in background when calling this command? */
 	FirstKey bool
 	LastKey  bool
-	KeyStep  int64
+	KeyStep  int
 	Duration time.Duration
-	Calls    int64
+	Calls    int
 }
 
 var CommandTable = []Command{
@@ -45,7 +45,7 @@ var CommandTable = []Command{
 }
 
 func PopulateCommandTable(s *Server) {
-	for _, cmd := range CommandTable {
+	for k, cmd := range CommandTable {
 		for i := 0; i < len(cmd.CharFlags); i++ {
 			switch cmd.CharFlags[i] {
 			case 'w':
@@ -78,21 +78,23 @@ func PopulateCommandTable(s *Server) {
 				panic("Unsupported command flag")
 			}
 		}
-		s.Commands[cmd.Name] = &cmd
-		s.OrigCommands[cmd.Name] = &cmd
+		// fmt.Println(cmd.Name)
+		s.Commands[cmd.Name] = &CommandTable[k]
+		s.OrigCommands[cmd.Name] = &CommandTable[k]
 	}
-
+	// fmt.Println(s.Commands)
+	// fmt.Println("hahahaha ----> ", s.Commands["set"].Name)
 }
 
-func (cmd *Command) WithFlags(flags int64) bool {
+func (cmd *Command) WithFlags(flags int) bool {
 	return cmd.Flags&flags != 0
 }
 
-func (cmd *Command) AddFlags(flags int64) {
+func (cmd *Command) AddFlags(flags int) {
 	cmd.Flags |= flags
 }
 
-func (cmd *Command) DeleteFlags(flags int64) {
+func (cmd *Command) DeleteFlags(flags int) {
 	cmd.Flags &= ^flags
 }
 
@@ -105,28 +107,32 @@ func (cmd *Command) IsProcess(cmdP *CommandProcess) bool {
 // XX - exist
 // EX - expire in seconds
 // PX - expire in milliseconds
-func SetGenericCommand(s *Server, c *Client, flags int64, key string, ok_reply string, abort_reply string) {
+func SetGenericCommand(s *Server, c *Client, flags int, key string, okReply string, abortReply string) {
+	// fmt.Println("SetGenericCommand")
 	if (flags&OBJ_SET_NX != 0 && c.Db.Exist(key)) || (flags&OBJ_SET_XX != 0 && !c.Db.Exist(key)) {
-		if abort_reply != "" {
+		if abortReply != "" {
 			AddReply(s, c, s.Shared.NullBulk)
 		} else {
-			AddReply(s, c, abort_reply)
+			AddReply(s, c, abortReply)
 		}
 		return
 	}
 	o := CreateStrObjectByStr(s, c.Argv[2])
 	c.Db.Set(key, o)
 	s.Dirty++
-	if ok_reply != "" {
+	if okReply == "" {
+		// fmt.Println("----------AddReply(s, c, s.Shared.Ok)", s.Shared.Ok)
 		AddReply(s, c, s.Shared.Ok)
 	} else {
-		AddReply(s, c, ok_reply)
+		// fmt.Println("2222222222AddReply(s, c, s.Shared.Ok)", okReply)
+		AddReply(s, c, okReply)
 	}
 }
 
 var SetCommand CommandProcess = func(s *Server, c *Client) {
+	// fmt.Println("SetCommand")
 	flags := OBJ_SET_NO_FLAGS
-	for j := int64(3); j < c.Argc; j++ {
+	for j := 3; j < c.Argc; j++ {
 		a := strings.ToUpper(c.Argv[j])
 
 		if a == "NX" && (flags&OBJ_SET_XX) != 0 {
@@ -140,7 +146,7 @@ var SetCommand CommandProcess = func(s *Server, c *Client) {
 		// TODO expire is not implemented now, so end here
 	}
 
-	SetGenericCommand(s, c, int64(flags), c.Argv[1], "", "")
+	SetGenericCommand(s, c, flags, c.Argv[1], "", "")
 }
 
 var SetNxCommand CommandProcess = func(s *Server, c *Client) {
@@ -161,8 +167,8 @@ var FlushAllCommand CommandProcess = func(s *Server, c *Client) {
 }
 
 var ExistsCommand CommandProcess = func(s *Server, c *Client) {
-	count := int64(0)
-	for j := int64(1); j < c.Argc; j++ {
+	count := 0
+	for j := 1; j < c.Argc; j++ {
 		if c.Db.Exist(c.Argv[1]) {
 			count++
 		}
@@ -172,7 +178,7 @@ var ExistsCommand CommandProcess = func(s *Server, c *Client) {
 	// addReply()
 }
 
-func IncrDecrCommand(s *Server, c *Client, incr int64) {
+func IncrDecrCommand(s *Server, c *Client, incr int) {
 	o := c.Db.Get(c.Argv[1]).(*StrObject)
 	if o == nil {
 		o = CreateStrObjectByInt(s, incr)
@@ -181,7 +187,7 @@ func IncrDecrCommand(s *Server, c *Client, incr int64) {
 	if !IsStrObjectInt(o) {
 		return
 	}
-	value := *o.Value.(*int64)
+	value := *o.Value.(*int)
 	oldValue := value
 	value += incr
 	if IsOverflowInt(oldValue, incr) {
@@ -202,7 +208,7 @@ var DecrCommand CommandProcess = func(s *Server, c *Client) {
 }
 
 var IncrByCommand CommandProcess = func(s *Server, c *Client) {
-	incr, err := strconv.ParseInt(c.Argv[2], 10, 64)
+	incr, err := strconv.Atoi(c.Argv[2])
 	if err != nil {
 		return
 	}
@@ -210,7 +216,7 @@ var IncrByCommand CommandProcess = func(s *Server, c *Client) {
 }
 
 var DecrByCommand CommandProcess = func(s *Server, c *Client) {
-	decr, err := strconv.ParseInt(c.Argv[2], 10, 64)
+	decr, err := strconv.Atoi(c.Argv[2])
 	if err != nil {
 		return
 	}
@@ -226,18 +232,18 @@ var StrLenCommand CommandProcess = func(s *Server, c *Client) {
 	if err == nil {
 		return
 	}
-	AddReplyInt(s, c, int64(len(str)))
+	AddReplyInt(s, c, len(str))
 }
 
 // Cat strings
 var AppendCommand CommandProcess = func(s *Server, c *Client) {
-	var length int64
+	var length int
 	o := c.Db.Get(c.Argv[1]).(*StrObject)
 	if o == nil {
 		o = CreateStrObjectByStr(s, c.Argv[2])
 		c.Db.Set(c.Argv[1], o)
 	} else {
-		if !CheckRType(o, OBJ_RTYPE_STR) {
+		if !CheckOType(o, OBJ_RTYPE_STR) {
 			return
 		}
 		_, length = AppendStrObject(s, o, c.Argv[2])
@@ -254,12 +260,12 @@ func DbGetOrReply(s *Server, c *Client, key string, reply string) Objector {
 	return o
 }
 
-func GetGenericCommand(s *Server, c *Client) int64 {
+func GetGenericCommand(s *Server, c *Client) int {
 	o := DbGetOrReply(s, c, c.Argv[1], s.Shared.NullBulk)
 	if o == nil {
 		return C_OK
 	}
-	if !CheckRType(o, OBJ_RTYPE_STR) {
+	if !CheckOType(o, OBJ_RTYPE_STR) {
 		AddReply(s, c, s.Shared.WrongTypeErr)
 		return C_ERR
 	} else {
@@ -281,7 +287,7 @@ func GetSetCommand(s *Server, c *Client) {
 	s.Dirty++
 }
 
-func MSetGenericCommand(s *Server, c *Client, flags int64) {
+func MSetGenericCommand(s *Server, c *Client, flags int) {
 	if c.Argc%2 == 0 {
 		AddReplyError(s, c, "wrong number of arguments for MSET")
 		return
@@ -327,7 +333,7 @@ var MGetCommand CommandProcess = func(s *Server, c *Client) {
 		if o == nil {
 			AddReply(s, c, s.Shared.NullBulk)
 		} else {
-			if !CheckRType(o, OBJ_RTYPE_STR) {
+			if !CheckOType(o, OBJ_RTYPE_STR) {
 				AddReply(s, c, s.Shared.NullBulk)
 			} else {
 				AddReplyBulkStrObj(s, c, o)
@@ -353,8 +359,8 @@ var DeleteCommand CommandProcess = func(s *Server, c *Client) {
 }
 
 func DeleteGenericCommand(s *Server, c *Client, lazy bool) {
-	count := int64(0)
-	for j := int64(1); j < c.Argc; j++ {
+	count := 0
+	for j := 1; j < c.Argc; j++ {
 		var deleted bool
 		if lazy {
 			deleted = DbDeleteAsync(s, c, c.Argv[j])
@@ -370,7 +376,7 @@ func DeleteGenericCommand(s *Server, c *Client, lazy bool) {
 }
 
 var SelectCommand CommandProcess = func(s *Server, c *Client) {
-	i, err := strconv.ParseInt(c.Argv[1], 10, 64)
+	i, err := strconv.Atoi(c.Argv[1])
 	if err != nil {
 		AddReplyError(s, c, "invalid DB index")
 	} else {

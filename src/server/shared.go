@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-type SharedObjects struct {
+type Shared struct {
 	Crlf           string // "\r\n"
 	NullBulk       string // "$-1\r\n"
 	EmptyBulk      string // "$0\r\n"
@@ -25,10 +25,10 @@ type SharedObjects struct {
 	BulkHDR        [SHARED_BULKHDR_LEN]string // "$<value>\r\n"
 }
 
-func CreateShared(s *Server) *SharedObjects {
+func CreateShared(s *Server) *Shared {
 	s.ServerLogDebugF("-->%v\n", "CreateShared")
 
-	so := SharedObjects{
+	so := Shared{
 		Crlf:           "\r\n",
 		NullBulk:       "$-1\r\n",
 		EmptyBulk:      "$0\r\n",
@@ -49,9 +49,10 @@ func CreateShared(s *Server) *SharedObjects {
 		BulkHDR:        [SHARED_BULKHDR_LEN]string{}, // "$<value>\r\n"
 	}
 	for i:=0; i<SHARED_INTEGERS; i++ {
+		v := i
 		so.Integers[i] = &StrObject{
 			CreateObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_INT),
-			&i,
+			&v,
 		}
 	}
 	for i:=0; i<SHARED_BULKHDR_LEN; i++ {

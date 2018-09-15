@@ -7,13 +7,13 @@ import (
 type SyncList struct {
 	Head  *ListNode
 	Tail  *ListNode
-	Len   int64
+	Len   int
 	Match func(value interface{}, key interface{}) bool
 	mutex sync.RWMutex
 }
 
 /* SyncList methods */
-func (list *SyncList) ListLength() int64 {
+func (list *SyncList) ListLength() int {
 	list.mutex.RLock()
 	defer list.mutex.RUnlock()
 	return list.Len

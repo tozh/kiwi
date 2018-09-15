@@ -12,52 +12,51 @@ import (
 	"errors"
 	"path/filepath"
 	"io"
-	"bytes"
 	"bufio"
 	"strings"
 )
 
 type Server struct {
-	Pid                  int64
+	Pid                  int
 	PidFile              string
 	ConfigFile           string
 	ExecFile             string
 	ExecArgv             []string
-	Hz                   int64 // serverCron() calls frequency in hertz
-	Dbs                  []*Db
-	DbNum                int64
+	Hz                   int // serverCron() calls frequency in hertz
+	Dbs                  [DEFAULT_DB_NUM]*Db
+	DbNum                int
 	Commands             map[string]*Command
 	OrigCommands         map[string]*Command
 	UnixTime             time.Time // UnixTime in nanosecond
 	LruClock             time.Time // Clock for LRU eviction
-	CronLoopCount        int64
-	NextClientId         int64
-	Port                 int64 // TCP listening port
+	CronLoopCount        int
+	NextClientId         int
+	Port                 int // TCP listening port
 	BindAddrs            []string
-	BindAddrCount        int64  // Number of addresses in test_server.bindaddr[]
+	BindAddrCount        int  // Number of addresses in test_server.bindaddr[]
 	UnixSocketPath       string // UNIX socket path
 	CurrentClient        *Client
 	Clients              *SyncList // List of active clients
-	ClientsMap           map[int64]*Client
-	ClientMaxQueryBufLen int64
-	ClientMaxReplyBufLen int64
-	MaxClients           int64
+	ClientsMap           map[int]*Client
+	ClientMaxQueryBufLen int
+	ClientMaxReplyBufLen int
+	MaxClients           int
 	ProtectedMode        bool // Don't accept external connections.
 	RequirePassword      *string
 	TcpKeepAlive         bool
-	ProtoMaxBulkLen      int64
+	ProtoMaxBulkLen      int
 	ClientMaxIdleTime    time.Duration
-	Dirty                int64 // Changes to DB from the last save
-	Shared               *SharedObjects
-	StatRejectedConn     int64
-	StatConnCount        int64
-	StatNetOutputBytes   int64
-	StatNetInputBytes    int64
-	StatNumCommands      int64
+	Dirty                int // Changes to DB from the last save
+	Shared               *Shared
+	StatRejectedConn     int
+	StatConnCount        int
+	StatNetOutputBytes   int
+	StatNetInputBytes    int
+	StatNumCommands      int
 	ConfigFlushAll       bool
-	MaxMemory            int64
+	MaxMemory            int
 	Loading              bool
-	LogLevel             int64
+	LogLevel             int
 	CloseCh              chan struct{}
 	mutex                sync.RWMutex
 	wg                   sync.WaitGroup
@@ -97,7 +96,7 @@ func UnLinkClient(s *Server, c *Client) {
 }
 
 func CloseClient(s *Server, c *Client) {
-	fmt.Println("CloseClient")
+	// fmt.Println("CloseClient")
 	c.QueryBuf.Reset()
 	c.ReplyWriter = nil
 	c.ResetArgv()
@@ -106,31 +105,35 @@ func CloseClient(s *Server, c *Client) {
 	UnLinkClient(s, c)
 }
 
-func GetClientById(s *Server, id int64) *Client {
+func GetClientById(s *Server, id int) *Client {
 	return s.ClientsMap[id]
 }
 
 // Write data in output buffers to client.
 func WriteToClient(s *Server, c *Client) {
+	defer c.Reset()
+	// fmt.Println("WriteToClient")
 	c.ReplyWriter.WriteByte(0)
 	s.mutex.Lock()
 	s.StatNetOutputBytes++
 	s.mutex.Unlock()
 	err := c.ReplyWriter.Flush()
 	if err != nil {
+		// fmt.Println()
 		return
 	}
 	c.SetLastInteraction(s.UnixTime)
-	c.Reset()
 }
 
-func ProcessInlineBuffer(s *Server, c *Client) int64 {
+func ProcessInlineBuffer(s *Server, c *Client) int {
+	// fmt.Println("ProcessInlineBuffer")
+
 	// Search for end of line
 	queryBuf := c.QueryBuf.Bytes()
 	size := len(queryBuf)
 	newline := IndexOfBytes(queryBuf, 0, size, '\n')
 	if newline == -1 {
-		if int64(size) > s.ClientMaxQueryBufLen {
+		if size > s.ClientMaxQueryBufLen {
 			AddReplyError(s, c, "Protocol error: too big inline request")
 			//SetProtocolError(s, c, "too big inline request", 0)
 		}
@@ -162,7 +165,8 @@ func ProcessInlineBuffer(s *Server, c *Client) int64 {
 	return C_OK
 }
 
-func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
+func ProcessMultiBulkBuffer(s *Server, c *Client) int {
+	// fmt.Println("ProcessMultiBulkBuffer")
 	if c.Argc != 0 {
 		panic("c.Argc != 0")
 	}
@@ -188,8 +192,9 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 			return C_OK
 		}
 		c.QueryBuf.ReadByte() // pass the \n
-		c.MultiBulkLen = int64(bulkNum)
+		c.MultiBulkLen = bulkNum
 		c.Argv = make([]string, c.MultiBulkLen)
+		// fmt.Println("c.MultiBulkLen", c.MultiBulkLen)
 	}
 	if c.MultiBulkLen < 0 {
 		return C_ERR
@@ -209,7 +214,7 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 			return C_ERR
 		}
 		bulkLen, err := strconv.Atoi(bulkLenStr)
-		if err != nil || int64(bulkLen) > s.ProtoMaxBulkLen {
+		if err != nil || bulkLen > s.ProtoMaxBulkLen {
 			AddReplyError(s, c, "Protocol error: invalid bulk length")
 			//SetProtocolError(s, c, "invalid bulk length", 0)
 			return C_ERR
@@ -229,19 +234,24 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int64 {
 			//SetProtocolError(s, c, "invalid bulk format", 0)
 			return C_ERR
 		}
-		c.Argv = append(c.Argv, string(bulk))
+		c.Argv[len(c.Argv)-c.MultiBulkLen]=string(bulk)
+		// fmt.Println("c.MultiBulkLen:", c.MultiBulkLen, ", c.Argv:", c.Argv)
 		c.Argc++
 		c.MultiBulkLen--
 	}
 	if c.MultiBulkLen == 0 {
+		// fmt.Println("ProcessMultiBulkBuffer", "OK")
 		return C_OK
 	}
+	// fmt.Println("ProcessMultiBulkBuffer", "ERR")
 	return C_ERR
 }
 
 func ProcessInputBuffer(s *Server, c *Client) {
+	// fmt.Println("ProcessInputBuffer")
 	s.mutex.Lock()
 	s.CurrentClient = c
+	s.mutex.Unlock()
 	if c.RequestType == 0 {
 		firstByte, _ := c.QueryBuf.ReadByteNotGoForward()
 		if firstByte == '*' {
@@ -255,6 +265,7 @@ func ProcessInputBuffer(s *Server, c *Client) {
 		}
 	} else if c.RequestType == PROTO_REQ_MULTIBULK {
 		if ProcessMultiBulkBuffer(s, c) != C_OK {
+
 		}
 	} else {
 		panic("Unknown request type")
@@ -263,25 +274,27 @@ func ProcessInputBuffer(s *Server, c *Client) {
 	if c.Argc != 0 {
 		ProcessCommand(s, c)
 	}
+	s.mutex.Lock()
 	s.CurrentClient = nil
 	s.mutex.Unlock()
 }
 
-func ReadFromClient(s *Server, c *Client, readCh chan int64) {
+func ReadFromClient(s *Server, c *Client, readCh chan int) {
+	// fmt.Println("ReadFromClient")
 	reader := bufio.NewReaderSize(c.Conn, PROTO_IOBUF_LEN)
 	for {
-		recieved, err := reader.ReadSlice(0)
-		fmt.Println("recieved----->", len(recieved))
+		recieved, err := reader.ReadBytes(0)
+		if len(recieved) > 0 {
+			c.QueryBuf.Write(recieved)
+		}
 		if err != nil {
-			fmt.Println(err)
+			// fmt.Println(err)
 			if err == io.EOF {
-				readCh <- C_ERR
 				BroadcastCloseClient(c)
 				return
 			}
-		}
-		if len(recieved) > 0 {
-			c.QueryBuf.Write(recieved)
+		} else {
+			break
 		}
 	}
 	c.ReadCount++
@@ -290,23 +303,28 @@ func ReadFromClient(s *Server, c *Client, readCh chan int64) {
 	}
 	c.SetLastInteraction(s.UnixTime)
 	s.mutex.Lock()
-	s.StatNetInputBytes += int64(c.QueryBuf.Len())
+	s.StatNetInputBytes += c.QueryBuf.Len()
 	s.mutex.Unlock()
 	ProcessInputBuffer(s, c)
 	readCh <- C_OK
 }
 
 func Call(s *Server, c *Client) {
+	// fmt.Println("Call")
 	c.Cmd.Process(s, c)
 	s.mutex.Lock()
 	s.StatNumCommands++
 	s.mutex.Unlock()
+	// fmt.Println("Call finished")
 }
 
-func ProcessCommand(s *Server, c *Client) int64 {
+func ProcessCommand(s *Server, c *Client) int {
+	// fmt.Println("ProcessCommand")
 	cmdName := strings.ToLower(c.Argv[0])
+	// fmt.Println([]byte(cmdName))
 	c.Cmd = LookUpCommand(s, cmdName)
 	if c.Cmd == nil {
+		// fmt.Println("c.Cmd == nil")
 		AddReplyError(s, c, fmt.Sprintf("unknown command '%s'", cmdName))
 		return C_OK
 	}
@@ -315,6 +333,7 @@ func ProcessCommand(s *Server, c *Client) int64 {
 		return C_OK
 	}
 	if s.RequirePassword != nil && c.Authenticated == 0 && &c.Cmd.Process != &AuthCommand {
+		// fmt.Println("Authenticated")
 		AddReplyError(s, c, s.Shared.NoAuthErr)
 		return C_OK
 	}
@@ -323,10 +342,11 @@ func ProcessCommand(s *Server, c *Client) int64 {
 }
 
 func LookUpCommand(s *Server, name string) *Command {
+	// fmt.Println("LookUpCommand", name)
 	return s.Commands[name]
 }
 
-//func SetProtocolError(s *Server, c *Client, err string, pos int64) {
+//func SetProtocolError(s *Server, c *Client, err string, pos int) {
 //	s.ServerLogErrorF("%s\n", err)
 //	if s.LogLevel <= LL_INFO {
 //		errorStr := fmt.Sprintf("Query buffer during protocol error: '%s'", c.QueryBuf)
@@ -342,8 +362,8 @@ func LookUpCommand(s *Server, name string) *Command {
 //	}
 //}
 
-func GetAllClientInfoString(s *Server, ctype int64) string {
-	str := bytes.Buffer{}
+func GetAllClientInfoString(s *Server, ctype int) string {
+	str := Buffer{}
 	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
 		c := node.Value.(*Client)
@@ -368,7 +388,7 @@ func DbDeleteAsync(s *Server, c *Client, key string) bool {
 	return true
 }
 
-func SelectDB(s *Server, c *Client, dbId int64) int64 {
+func SelectDB(s *Server, c *Client, dbId int) int {
 	if dbId < 0 || dbId >= s.DbNum {
 		return C_ERR
 	}
@@ -410,12 +430,13 @@ func ServerCron(s *Server) {
 
 func ServerExists() (int, error) {
 	fmt.Printf("-->%v\n", "ServerExists")
-	if redigoPidFile, err1 := os.Open(os.TempDir() + "KiwiDB.pid"); err1 == nil {
-		defer redigoPidFile.Close()
-		if pidStr, err2 := ioutil.ReadAll(redigoPidFile); err2 == nil {
+	// fmt.Println(os.TempDir() + "kiwi.pid")
+	if kiwiPidFile, err1 := os.Open(os.TempDir() + "kiwi.pid"); err1 == nil {
+		defer kiwiPidFile.Close()
+		if pidStr, err2 := ioutil.ReadAll(kiwiPidFile); err2 == nil {
 			if pid, err3 := strconv.Atoi(string(pidStr)); err3 == nil {
 				if _, err4 := os.FindProcess(pid); err4 == nil {
-					return pid, errors.New(fmt.Sprintf("Error! Redigo test_server is now runing. Pid is %d", pid))
+					return pid, errors.New(fmt.Sprintf("Error! Wiki server is now runing. Pid is %d", pid))
 				}
 			}
 		}
@@ -423,80 +444,159 @@ func ServerExists() (int, error) {
 	return 0, nil
 }
 
-func CreateServer() *Server {
-	fmt.Println("CreateServer")
-	pidFile := os.TempDir() + "KiwiDB.pid"
-	unixSocketPath := os.TempDir() + "KiwiDB.sock"
-	if pid, err1 := ServerExists(); err1 == nil {
-		pid = os.Getpid()
-		if redigoPidFile, err2 := os.Create(pidFile); err2 == nil {
-			redigoPidFile.WriteString(fmt.Sprintf("%d", pid))
-			redigoPidFile.Close()
-		}
+//func CreateServer() *Server {
+//	// fmt.Println("CreateServer")
+//	pidFile := os.TempDir() + "kiwi.pid"
+//	unixSocketPath := os.TempDir() + "kiwi.sock"
+//	if pid, err1 := ServerExists(); err1 == nil {
+//		pid = os.Getpid()
+//		if kiwiPidFile, err2 := os.Create(pidFile); err2 == nil {
+//			kiwiPidFile.WriteString(fmt.Sprintf("%d", pid))
+//			kiwiPidFile.Close()
+//		}
+//
+//		configPath, _ := filepath.Abs(filepath.Dir(os.Args[0]))
+//		nowTime := time.Now()
+//		s := Server{
+//			Pid:                  pid,
+//			PidFile:              pidFile,
+//			ConfigFile:           configPath,
+//			ExecFile:             os.Args[0],
+//			ExecArgv:             os.Args,
+//			Hz:                   10,
+//			Dbs:                  make([]*Db, DEFAULT_DB_NUM),
+//			DbNum:                DEFAULT_DB_NUM,
+//			Commands:             make(map[string]*Command),
+//			OrigCommands:         make(map[string]*Command),
+//			UnixTime:             nowTime,
+//			LruClock:             nowTime,
+//			CronLoopCount:        0,
+//			NextClientId:         0,
+//			Port:                 9988,
+//			BindAddrs:            make([]string, CONFIG_BINDADDR_MAX),
+//			BindAddrCount:        0,
+//			UnixSocketPath:       unixSocketPath,
+//			CurrentClient:        nil,
+//			Clients:              nil,
+//			ClientsMap:           make(map[int]*Client),
+//			ClientMaxQueryBufLen: PROTO_INLINE_MAX_SIZE,
+//			MaxClients:           CONFIG_DEFAULT_MAX_CLIENTS,
+//			ProtectedMode:        true,
+//			RequirePassword:      nil,
+//			TcpKeepAlive:         true,
+//			ProtoMaxBulkLen:      CONFIG_DEFAULT_PROTO_MAX_BULK_LEN,
+//			ClientMaxIdleTime:    5 * time.Second,
+//			Dirty:                0,
+//			Shared:               nil,
+//			StatRejectedConn:     0,
+//			StatConnCount:        0,
+//			StatNetOutputBytes:   0,
+//			StatNetInputBytes:    0,
+//			StatNumCommands:      0,
+//			ConfigFlushAll:       false,
+//			MaxMemory:            CONFIG_DEFAULT_MAXMEMORY,
+//			Loading:              false,
+//			LogLevel:             LL_DEBUG,
+//			CloseCh:              make(chan struct{}, 1),
+//			mutex:                sync.RWMutex{},
+//			wg:                   sync.WaitGroup{},
+//		}
+//		for i := 0; i < s.DbNum; i++ {
+//			s.Dbs = append(s.Dbs, CreateDb(i))
+//		}
+//		s.Clients = CreateSyncList()
+//		s.BindAddrs = append(s.BindAddrs, "0.0.0.0")
+//		s.BindAddrCount++
+//		// // fmt.Println(&s)
+//		PopulateCommandTable(&s)
+//		return &s
+//	} else {
+//		// fmt.Println(err1)
+//	}
+//	os.Exit(1)
+//	return nil
+//}
 
-		configPath, _ := filepath.Abs(filepath.Dir(os.Args[0]))
-		nowTime := time.Now()
-		s := Server{
-			Pid:                  int64(pid),
-			PidFile:              pidFile,
-			ConfigFile:           configPath,
-			ExecFile:             os.Args[0],
-			ExecArgv:             os.Args,
-			Hz:                   10,
-			Dbs:                  make([]*Db, DEFAULT_DB_NUM),
-			DbNum:                DEFAULT_DB_NUM,
-			Commands:             make(map[string]*Command),
-			OrigCommands:         make(map[string]*Command),
-			UnixTime:             nowTime,
-			LruClock:             nowTime,
-			CronLoopCount:        0,
-			NextClientId:         0,
-			Port:                 9988,
-			BindAddrs:            make([]string, CONFIG_BINDADDR_MAX),
-			BindAddrCount:        0,
-			UnixSocketPath:       unixSocketPath,
-			CurrentClient:        nil,
-			Clients:              nil,
-			ClientsMap:           make(map[int64]*Client),
-			ClientMaxQueryBufLen: PROTO_INLINE_MAX_SIZE,
-			MaxClients:           CONFIG_DEFAULT_MAX_CLIENTS,
-			ProtectedMode:        true,
-			RequirePassword:      nil,
-			TcpKeepAlive:         true,
-			ProtoMaxBulkLen:      CONFIG_DEFAULT_PROTO_MAX_BULK_LEN,
-			ClientMaxIdleTime:    5 * time.Second,
-			Dirty:                0,
-			Shared:               nil,
-			StatRejectedConn:     0,
-			StatConnCount:        0,
-			StatNetOutputBytes:   0,
-			StatNetInputBytes:    0,
-			StatNumCommands:      0,
-			ConfigFlushAll:       false,
-			MaxMemory:            CONFIG_DEFAULT_MAXMEMORY,
-			Loading:              false,
-			LogLevel:             LL_DEBUG,
-			CloseCh:              make(chan struct{}, 1),
-			mutex:                sync.RWMutex{},
-			wg:                   sync.WaitGroup{},
-		}
-		for i := int64(0); i < s.DbNum; i++ {
-			s.Dbs = append(s.Dbs, CreateDb(i))
-		}
-		s.Clients = CreateSyncList()
-		s.BindAddrs = append(s.BindAddrs, "0.0.0.0")
-		s.BindAddrCount++
-		CreateShared(&s)
-		return &s
-	} else {
-		fmt.Println(err1)
+func CreateServer() *Server {
+	// fmt.Println("CreateServer")
+	pidFile := os.TempDir() + "kiwi.pid"
+	unixSocketPath := os.TempDir() + "kiwi.sock"
+	pid := os.Getpid()
+	fmt.Println("Pid", pid)
+
+	configPath, _ := filepath.Abs(filepath.Dir(os.Args[0]))
+	nowTime := time.Now()
+	s := Server{
+		Pid:                  pid,
+		PidFile:              pidFile,
+		ConfigFile:           configPath,
+		ExecFile:             os.Args[0],
+		ExecArgv:             os.Args,
+		Hz:                   10,
+		Dbs:                  [DEFAULT_DB_NUM]*Db{},
+		DbNum:                DEFAULT_DB_NUM,
+		Commands:             make(map[string]*Command),
+		OrigCommands:         make(map[string]*Command),
+		UnixTime:             nowTime,
+		LruClock:             nowTime,
+		CronLoopCount:        0,
+		NextClientId:         0,
+		Port:                 9988,
+		BindAddrs:            make([]string, CONFIG_BINDADDR_MAX),
+		BindAddrCount:        0,
+		UnixSocketPath:       unixSocketPath,
+		CurrentClient:        nil,
+		Clients:              nil,
+		ClientsMap:           make(map[int]*Client),
+		ClientMaxQueryBufLen: PROTO_INLINE_MAX_SIZE,
+		MaxClients:           CONFIG_DEFAULT_MAX_CLIENTS,
+		ProtectedMode:        true,
+		RequirePassword:      nil,
+		TcpKeepAlive:         true,
+		ProtoMaxBulkLen:      CONFIG_DEFAULT_PROTO_MAX_BULK_LEN,
+		ClientMaxIdleTime:    5 * time.Second,
+		Dirty:                0,
+		StatRejectedConn:     0,
+		StatConnCount:        0,
+		StatNetOutputBytes:   0,
+		StatNetInputBytes:    0,
+		StatNumCommands:      0,
+		ConfigFlushAll:       false,
+		MaxMemory:            CONFIG_DEFAULT_MAXMEMORY,
+		Loading:              false,
+		LogLevel:             LL_DEBUG,
+		CloseCh:              make(chan struct{}, 1),
+		mutex:                sync.RWMutex{},
+		wg:                   sync.WaitGroup{},
 	}
+	for i := 0; i < s.DbNum; i++ {
+		s.Dbs[i] = CreateDb(i)
+	}
+	s.Clients = CreateSyncList()
+	s.BindAddrs = append(s.BindAddrs, "0.0.0.0")
+	s.BindAddrCount++
+	// // fmt.Println(&s)
+	CreateShared(&s)
+	PopulateCommandTable(&s)
+	return &s
+
+	//if pid, err1 := ServerExists(); err1 == nil {
+	//	pid = os.Getpid()
+	//	if kiwiPidFile, err2 := os.Create(pidFile); err2 == nil {
+	//		kiwiPidFile.WriteString(fmt.Sprintf("%d", pid))
+	//		kiwiPidFile.Close()
+	//	}
+	//
+	//} else {
+	//	// fmt.Println(err1)
+	//}
 	os.Exit(1)
 	return nil
 }
 
+
 func StartServer(s *Server) {
-	fmt.Println("StartServer")
+	// fmt.Println("StartServer")
 	if s == nil {
 		return
 	}
@@ -511,7 +611,7 @@ func StartServer(s *Server) {
 }
 
 func HandleSignal(s *Server) {
-	fmt.Println("HandleSignal")
+	// fmt.Println("HandleSignal")
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	s.ServerLogDebugF("-->%v: <%v>\n", "Signal", <-c)
@@ -521,17 +621,18 @@ func HandleSignal(s *Server) {
 }
 
 func CloseServerListener(s *Server) {
+	// fmt.Println("CloseServerListener")
 	s.wg.Add(1)
 	defer s.wg.Done()
 	select {
 	case <-s.CloseCh:
-		fmt.Println("CloseServerListener ----> Close Server")
+		// fmt.Println("CloseServerListener ----> Close Server")
 		CloseServer(s)
 	}
 }
 
 func CloseServer(s *Server) {
-	fmt.Println("CloseServer")
+	// fmt.Println("CloseServer")
 	// clear clients
 	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	for node := iter.ListNext(); node != nil; node = iter.ListNext() {

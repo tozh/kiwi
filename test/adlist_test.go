@@ -1,7 +1,7 @@
 package test
 
 import (
-	. "KiwiDB/src/server"
+	. "kiwi/src/server"
 	"fmt"
 )
 
