@@ -111,7 +111,7 @@ func SetGenericCommand(s *Server, c *Client, flags int, key string, okReply stri
 	// fmt.Println("SetGenericCommand")
 	if (flags&OBJ_SET_NX != 0 && c.Db.Exist(key)) || (flags&OBJ_SET_XX != 0 && !c.Db.Exist(key)) {
 		if abortReply != "" {
-			AddReply(s, c, s.Shared.NullBulk)
+			AddReply(s, c, s.Shared.Zero)
 		} else {
 			AddReply(s, c, abortReply)
 		}
@@ -121,10 +121,8 @@ func SetGenericCommand(s *Server, c *Client, flags int, key string, okReply stri
 	c.Db.Set(key, o)
 	s.Dirty++
 	if okReply == "" {
-		// fmt.Println("----------AddReply(s, c, s.Shared.Ok)", s.Shared.Ok)
-		AddReply(s, c, s.Shared.Ok)
+		AddReply(s, c, s.Shared.One)
 	} else {
-		// fmt.Println("2222222222AddReply(s, c, s.Shared.Ok)", okReply)
 		AddReply(s, c, okReply)
 	}
 }
@@ -145,8 +143,7 @@ var SetCommand CommandProcess = func(s *Server, c *Client) {
 		}
 		// TODO expire is not implemented now, so end here
 	}
-
-	SetGenericCommand(s, c, flags, c.Argv[1], "", "")
+	SetGenericCommand(s, c, flags, c.Argv[1], s.Shared.One, s.Shared.Zero)
 }
 
 var SetNxCommand CommandProcess = func(s *Server, c *Client) {
@@ -154,7 +151,7 @@ var SetNxCommand CommandProcess = func(s *Server, c *Client) {
 }
 
 var SetExCommand CommandProcess = func(s *Server, c *Client) {
-	SetGenericCommand(s, c, OBJ_SET_XX, c.Argv[1], "", "")
+	SetGenericCommand(s, c, OBJ_SET_XX, c.Argv[1], s.Shared.One, s.Shared.Zero)
 }
 
 var FlushAllCommand CommandProcess = func(s *Server, c *Client) {
