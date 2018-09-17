@@ -4,6 +4,7 @@ import (
 	"strings"
 	"strconv"
 	"time"
+	"sync/atomic"
 )
 
 type CommandProcess func(s *Server, c *Client)
@@ -39,7 +40,7 @@ var CommandTable = []Command{
 	{"mget", MGetCommand, -2, "rF", 0, nil, true, false, 1, 0, 0},
 	{"mset", MSetCommand, -3, "wm", 0, nil, true, true, 2, 0, 0},
 	{"msetnx", GetCommand, 2, "wm", 0, nil, true, true, 2, 0, 0},
-	{"randomkey", RandomKeyCommand, 1, "rR", 0, nil, false, false, 0, 0, 0},
+	//{"randomkey", RandomKeyCommand, 1, "rR", 0, nil, false, false, 0, 0, 0},
 	{"select", SelectCommand, 2, "lF", 0, nil, false, false, 0, 0, 0},
 	{"flushall", FlushAllCommand, -1, "w", 0, nil, false, false, 0, 0, 0},
 }
@@ -119,7 +120,7 @@ func SetGenericCommand(s *Server, c *Client, flags int, key string, okReply stri
 	}
 	o := CreateStrObjectByStr(s, c.Argv[2])
 	c.Db.Set(key, o)
-	s.Dirty++
+	atomic.AddInt64(&s.Dirty, 1)
 	if okReply == "" {
 		AddReply(s, c, s.Shared.One)
 	} else {
@@ -160,7 +161,7 @@ var FlushAllCommand CommandProcess = func(s *Server, c *Client) {
 		AddReply(s, c, s.Shared.Ok)
 		//	TODO update aof or rdb
 	}
-	s.Dirty++
+	atomic.AddInt64(&s.Dirty, 1)
 }
 
 var ExistsCommand CommandProcess = func(s *Server, c *Client) {
@@ -192,7 +193,7 @@ func IncrDecrCommand(s *Server, c *Client, incr int) {
 		return
 	}
 	ReplaceStrObjectByInt(s, o, &oldValue, &value)
-	s.Dirty++
+	atomic.AddInt64(&s.Dirty, 1)
 	AddReplyInt(s, c, value)
 }
 
@@ -245,7 +246,7 @@ var AppendCommand CommandProcess = func(s *Server, c *Client) {
 		}
 		_, length = AppendStrObject(s, o, c.Argv[2])
 	}
-	s.Dirty++
+	atomic.AddInt64(&s.Dirty, 1)
 	AddReplyInt(s, c, length)
 }
 
@@ -281,7 +282,7 @@ func GetSetCommand(s *Server, c *Client) {
 	}
 	o := CreateStrObjectByStr(s, c.Argv[2])
 	c.Db.Set(c.Argv[1], o)
-	s.Dirty++
+	atomic.AddInt64(&s.Dirty, 1)
 }
 
 func MSetGenericCommand(s *Server, c *Client, flags int) {
@@ -307,7 +308,7 @@ func MSetGenericCommand(s *Server, c *Client, flags int) {
 		o := CreateStrObjectByStr(s, c.Argv[j+1])
 		c.Db.Set(c.Argv[j], o)
 	}
-	s.Dirty += (c.Argc - 1) / 2
+	atomic.AddInt64(&s.Dirty, int64((c.Argc - 1) / 2))
 	if flags&OBJ_SET_NX != 0 {
 		AddReply(s, c, s.Shared.One)
 	} else {
@@ -366,7 +367,7 @@ func DeleteGenericCommand(s *Server, c *Client, lazy bool) {
 		}
 		if deleted {
 			count++
-			s.Dirty++
+			atomic.AddInt64(&s.Dirty, 1)
 		}
 	}
 	AddReplyInt(s, c, count)
@@ -384,12 +385,12 @@ var SelectCommand CommandProcess = func(s *Server, c *Client) {
 		}
 	}
 }
-
-var RandomKeyCommand CommandProcess = func(s *Server, c *Client) {
-	key, value := c.Db.RandGet()
-	if key == "" && value == nil {
-		AddReply(s, c, s.Shared.NullBulk)
-	} else {
-		AddReplyBulkStr(s, c, key)
-	}
-}
+//
+//var RandomKeyCommand CommandProcess = func(s *Server, c *Client) {
+//	key, value := c.Db.RandGet()
+//	if key == "" && value == nil {
+//		AddReply(s, c, s.Shared.NullBulk)
+//	} else {
+//		AddReplyBulkStr(s, c, key)
+//	}
+//}

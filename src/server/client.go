@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"sync"
 	"bufio"
+	"sync/atomic"
 )
 
 type Client struct {
-	Id              int
+	Id              int64
 	Conn            net.Conn
 	Db              *Db
 	Name            string
@@ -27,7 +28,7 @@ type Client struct {
 	MultiBulkLen    int // Number of multi bulk arguments left to read.
 	Authenticated   int
 	CloseCh         chan struct{}
-	HeartBeatCh     chan int
+	//HeartBeatCh     chan int
 	ReadCount       int
 	MaxIdleTime     time.Duration
 	mutex           sync.RWMutex
@@ -69,10 +70,8 @@ func (c *Client) GetPeerId(s *Server) string {
 }
 
 func (c *Client) GetNextClientId(s *Server) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	c.Id = s.NextClientId
-	s.NextClientId++
+	c.Id = atomic.LoadInt64(&s.NextClientId)
+	atomic.AddInt64(&s.NextClientId, 1)
 }
 
 func (c *Client) Write(b []byte) (int, error) {
@@ -209,7 +208,7 @@ func CatClientInfoString(s *Server, c *Client) string {
 	cmd := "nil"
 	clientFmt := "id=%d addr=%s conn=%s name=%s age=%d idle=%d flags=%s db=%d cmd=%s"
 	return fmt.Sprintf(clientFmt, c.Id, c.GetPeerId(s), c.Conn.LocalAddr().String(), c.Name, s.UnixTime.Sub(c.CreateTime).Nanoseconds()/1000,
-		s.UnixTime.Sub(c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.Id, cmd)
+		s.UnixTime.Sub(c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.id, cmd)
 }
 
 func CreateClient(s *Server, conn net.Conn, flags int) *Client {
@@ -232,7 +231,7 @@ func CreateClient(s *Server, conn net.Conn, flags int) *Client {
 		MultiBulkLen:    0,
 		Authenticated:   0,
 		CloseCh:         make(chan struct{}, 1),
-		HeartBeatCh:     nil,
+		//HeartBeatCh:     nil,
 		ReadCount:       0,
 		MaxIdleTime:     0,
 		mutex:           sync.RWMutex{},

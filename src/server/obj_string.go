@@ -330,3 +330,12 @@ func IndexOfBytes(buf []byte, start int, end int, target byte) int {
 	}
 	return -1
 }
+
+
+func getStrByStrObject(key *StrObject) string {
+	if key.Encoding == OBJ_ENCODING_INT {
+		return strconv.Itoa(*key.Value.(*int))
+	} else {
+		return *key.Value.(*string)
+	}
+}

@@ -1,38 +1,29 @@
 package server
 
 import (
-	"strconv"
 	"sync"
 )
 
 type Db struct {
-	Dict  map[string]Objector
-	Id    int
+	dict  map[string]Objector
+	id    int
 	mutex sync.RWMutex
-}
-
-func getStrByStrObject(key *StrObject) string {
-	if key.Encoding == OBJ_ENCODING_INT {
-		return strconv.Itoa(*key.Value.(*int))
-	} else {
-		return *key.Value.(*string)
-	}
 }
 
 func (db *Db) Get(key string) Objector {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
-	return db.Dict[key]
+	return db.dict[key]
 }
 
 //func (db *Db) GetForWrite(key Objector) Objector {
-//	return db.Dict[key]
+//	return db.dict[key]
 //}
 
 func (db *Db) RandGet() (string, Objector) {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
-	for key, value := range db.Dict {
+	for key, value := range db.dict {
 		return key, value
 	}
 	return "", nil
@@ -40,13 +31,13 @@ func (db *Db) RandGet() (string, Objector) {
 
 func (db *Db) Set(key string, ptr Objector) {
 	db.mutex.Lock()
-	db.Dict[key] = ptr
+	db.dict[key] = ptr
 	db.mutex.Unlock()
 }
 
 func (db *Db) Delete(key string) {
 	db.mutex.Lock()
-	delete(db.Dict, key)
+	delete(db.dict, key)
 	db.mutex.Unlock()
 }
 
@@ -76,12 +67,12 @@ func (db *Db) Exist(key string) bool {
 func (db *Db) Size() int {
 	db.mutex.Lock()
 	defer db.mutex.RUnlock()
-	return len(db.Dict)
+	return len(db.dict)
 }
 
 func (db *Db) FlushAll() {
 	db.mutex.Lock()
-	db.Dict = make(map[string]Objector)
+	db.dict = make(map[string]Objector)
 	db.mutex.Unlock()
 }
 

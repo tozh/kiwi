@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"fmt"
+	"sync/atomic"
 )
 
 func AddReply(s *Server, c *Client, str string) {
@@ -12,17 +13,9 @@ func AddReply(s *Server, c *Client, str string) {
 	}
 	n, err := c.ReplyWriter.WriteString(str)
 	if err != nil {
-		// fmt.Println(err)
 		return
 	}
-	// fmt.Println("Writer OK")
-
-	s.mutex.Lock()
-	// fmt.Println("Lock Got")
-	s.StatNetOutputBytes += n
-	s.mutex.Unlock()
-	// fmt.Println("AddReply OK")
-
+	atomic.AddInt64(&s.StatNetOutputBytes, int64(n))
 }
 
 func AddReplyStrObj(s *Server, c *Client, o *StrObject) {

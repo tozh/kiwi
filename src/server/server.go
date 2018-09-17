@@ -14,6 +14,7 @@ import (
 	"io"
 	"bufio"
 	"strings"
+	"sync/atomic"
 )
 
 type Server struct {
@@ -30,14 +31,13 @@ type Server struct {
 	UnixTime             time.Time // UnixTime in nanosecond
 	LruClock             time.Time // Clock for LRU eviction
 	CronLoopCount        int
-	NextClientId         int
+	NextClientId         int64
 	Port                 int // TCP listening port
 	BindAddrs            []string
 	BindAddrCount        int  // Number of addresses in test_server.bindaddr[]
 	UnixSocketPath       string // UNIX socket path
-	CurrentClient        *Client
 	Clients              *SyncList // List of active clients
-	ClientsMap           map[int]*Client
+	ClientsMap           map[int64]*Client
 	ClientMaxQueryBufLen int
 	ClientMaxReplyBufLen int
 	MaxClients           int
@@ -46,13 +46,13 @@ type Server struct {
 	TcpKeepAlive         bool
 	ProtoMaxBulkLen      int
 	ClientMaxIdleTime    time.Duration
-	Dirty                int // Changes to DB from the last save
+	Dirty                int64 // Changes to DB from the last save
 	Shared               *Shared
-	StatRejectedConn     int
-	StatConnCount        int
-	StatNetOutputBytes   int
-	StatNetInputBytes    int
-	StatNumCommands      int
+	StatRejectedConn     int64
+	StatConnCount        int64
+	StatNetOutputBytes   int64
+	StatNetInputBytes    int64
+	StatNumCommands      int64
 	ConfigFlushAll       bool
 	MaxMemory            int
 	Loading              bool
@@ -78,18 +78,16 @@ func LinkClient(s *Server, c *Client) {
 	s.Clients.ListAddNodeTail(c)
 	s.ClientsMap[c.Id] = c
 	c.Node = s.Clients.ListTail()
-	s.StatConnCount++
+	atomic.AddInt64(&s.StatConnCount, 1)
 }
 
 func UnLinkClient(s *Server, c *Client) {
-	if s.CurrentClient == c {
-		s.CurrentClient = nil
-	}
+
 	if c.Conn != nil {
 		s.Clients.ListDelNode(c.Node)
 		c.Node = nil
 		delete(s.ClientsMap, c.Id)
-		s.StatConnCount--
+		atomic.AddInt64(&s.StatConnCount, -1)
 		c.Conn.Close()
 		c.Conn = nil
 	}
@@ -105,24 +103,18 @@ func CloseClient(s *Server, c *Client) {
 	UnLinkClient(s, c)
 }
 
-func GetClientById(s *Server, id int) *Client {
+func GetClientById(s *Server, id int64) *Client {
 	return s.ClientsMap[id]
 }
 
 // Write data in output buffers to client.
 func WriteToClient(s *Server, c *Client) {
 	defer c.Reset()
-	// fmt.Println("WriteToClient")
 	c.ReplyWriter.WriteByte(0)
-	s.mutex.Lock()
-	s.StatNetOutputBytes++
-	s.mutex.Unlock()
-	err := c.ReplyWriter.Flush()
-	if err != nil {
-		// fmt.Println()
-		return
+	atomic.AddInt64(&s.StatNetOutputBytes, 1)
+	if c.ReplyWriter.Flush() == nil {
+		c.SetLastInteraction(s.UnixTime)
 	}
-	c.SetLastInteraction(s.UnixTime)
 }
 
 func ProcessInlineBuffer(s *Server, c *Client) int {
@@ -249,9 +241,6 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int {
 
 func ProcessInputBuffer(s *Server, c *Client) {
 	// fmt.Println("ProcessInputBuffer")
-	s.mutex.Lock()
-	s.CurrentClient = c
-	s.mutex.Unlock()
 	if c.RequestType == 0 {
 		firstByte, _ := c.QueryBuf.ReadByteNotGoForward()
 		if firstByte == '*' {
@@ -274,48 +263,35 @@ func ProcessInputBuffer(s *Server, c *Client) {
 	if c.Argc != 0 {
 		ProcessCommand(s, c)
 	}
-	s.mutex.Lock()
-	s.CurrentClient = nil
-	s.mutex.Unlock()
 }
 
-func ReadFromClient(s *Server, c *Client, readCh chan int) {
-	// fmt.Println("ReadFromClient")
+func ProcessQuery(s *Server, c *Client, processingCh chan int) {
 	reader := bufio.NewReaderSize(c.Conn, PROTO_IOBUF_LEN)
 	for {
 		recieved, err := reader.ReadBytes(0)
+		if err == io.EOF {  // client side closed connection
+			BroadcastCloseClient(c)
+			return
+		}
 		if len(recieved) > 0 {
 			c.QueryBuf.Write(recieved)
 		}
-		if err != nil {
-			// fmt.Println(err)
-			if err == io.EOF {
-				BroadcastCloseClient(c)
-				return
-			}
-		} else {
+		if err == nil{
 			break
 		}
 	}
 	c.ReadCount++
-	if !c.WithFlags(CLIENT_LUA) && c.MaxIdleTime == 0 {
-		c.HeartBeatCh <- c.ReadCount
-	}
 	c.SetLastInteraction(s.UnixTime)
-	s.mutex.Lock()
-	s.StatNetInputBytes += c.QueryBuf.Len()
-	s.mutex.Unlock()
+	atomic.AddInt64(&s.StatNetInputBytes, int64(c.QueryBuf.Len()))
 	ProcessInputBuffer(s, c)
-	readCh <- C_OK
+	WriteToClient(s, c)
+	close(processingCh)
 }
 
 func Call(s *Server, c *Client) {
 	// fmt.Println("Call")
 	c.Cmd.Process(s, c)
-	s.mutex.Lock()
-	s.StatNumCommands++
-	s.mutex.Unlock()
-	// fmt.Println("Call finished")
+	atomic.AddInt64(&s.StatNumCommands, 1)
 }
 
 func ProcessCommand(s *Server, c *Client) int {
@@ -545,9 +521,8 @@ func CreateServer() *Server {
 		BindAddrs:            make([]string, CONFIG_BINDADDR_MAX),
 		BindAddrCount:        0,
 		UnixSocketPath:       unixSocketPath,
-		CurrentClient:        nil,
 		Clients:              nil,
-		ClientsMap:           make(map[int]*Client),
+		ClientsMap:           make(map[int64]*Client),
 		ClientMaxQueryBufLen: PROTO_INLINE_MAX_SIZE,
 		MaxClients:           CONFIG_DEFAULT_MAX_CLIENTS,
 		ProtectedMode:        true,
