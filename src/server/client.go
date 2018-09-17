@@ -14,8 +14,9 @@ type Client struct {
 	Conn            net.Conn
 	Db              *Db
 	Name            string
-	QueryBuf        *LargeBuffer
-	Argc            int    // count of arguments
+	ReadBuf         []byte
+	ProcessBuf      *LargeBuffer
+	Argc            int      // count of arguments
 	Argv            []string // arguments of current command
 	Cmd             *Command
 	ReplyWriter     *bufio.Writer
@@ -29,9 +30,9 @@ type Client struct {
 	Authenticated   int
 	CloseCh         chan struct{}
 	//HeartBeatCh     chan int
-	ReadCount       int
-	MaxIdleTime     time.Duration
-	mutex           sync.RWMutex
+	QueryCount  int
+	MaxIdleTime time.Duration
+	mutex       *sync.Mutex
 }
 
 func (c *Client) GetLastInteraction() time.Time {
@@ -127,20 +128,25 @@ func (c *Client) GetClientTypeName(ctype int) string {
 	}
 }
 
-// resetClient for next query
-func (c *Client) Reset() {
-	c.ResetArgv()
-	c.RequestType = 0
-	c.MultiBulkLen = 0
-	c.ReplyWriter.Reset(c.Conn)
-	c.QueryBuf.Reset()
-}
 
 func (c *Client) ResetArgv() {
 	c.Argc = 0
 	c.Cmd = nil
 	c.Argv = nil
 }
+
+func (c *Client) ResetReadStatus() {
+	c.ReadBuf=make([]byte, 0)
+}
+
+func (c *Client) ResetProcessStatus() {
+	c.ResetArgv()
+	c.RequestType = 0
+	c.MultiBulkLen = 0
+	c.ReplyWriter.Reset(c.Conn)
+	c.ProcessBuf.Reset()
+}
+
 
 func (c *Client) PrepareClientToWrite() int {
 	// fmt.Println("PrepareClientToWrite")
@@ -217,7 +223,8 @@ func CreateClient(s *Server, conn net.Conn, flags int) *Client {
 		Id:              0,
 		Conn:            conn,
 		Name:            "",
-		QueryBuf:        &LargeBuffer{},
+		ReadBuf:         make([]byte, 0),
+		ProcessBuf:      &LargeBuffer{},
 		Argc:            0,                 // count of arguments
 		Argv:            make([]string, 0), // arguments of current command
 		Cmd:             nil,
@@ -232,9 +239,9 @@ func CreateClient(s *Server, conn net.Conn, flags int) *Client {
 		Authenticated:   0,
 		CloseCh:         make(chan struct{}, 1),
 		//HeartBeatCh:     nil,
-		ReadCount:       0,
-		MaxIdleTime:     0,
-		mutex:           sync.RWMutex{},
+		QueryCount:  0,
+		MaxIdleTime: 0,
+		mutex:       &sync.Mutex{},
 	}
 	if !c.WithFlags(CLIENT_LUA) {
 		c.MaxIdleTime = s.ClientMaxIdleTime
@@ -243,4 +250,85 @@ func CreateClient(s *Server, conn net.Conn, flags int) *Client {
 	SelectDB(s, &c, 0)
 	LinkClient(s, &c)
 	return &c
+}
+
+func BroadcastCloseClient(c *Client) {
+	close(c.CloseCh)
+}
+
+func CloseClientListener(s *Server, c *Client) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+	select {
+	case <-c.CloseCh:
+		CloseClient(s, c)
+	}
+}
+
+
+func HeartBeating(s *Server, c *Client, readCh chan int) {
+	// fmt.Println("HeartBeatLoop")
+	s.wg.Add(1)
+	defer s.wg.Done()
+	select {
+	case <-c.CloseCh:
+		return
+	case <-readCh:
+		return
+	case <-time.After(c.MaxIdleTime):
+		fmt.Println("HearBeat fail. 3s reached.")
+		close(readCh)
+		BroadcastCloseClient(c)
+		return
+	}
+}
+
+
+func LinkClient(s *Server, c *Client) {
+	s.Clients.ListAddNodeTail(c)
+	s.ClientsMap[c.Id] = c
+	c.Node = s.Clients.ListTail()
+	atomic.AddInt64(&s.StatConnCount, 1)
+}
+
+func UnLinkClient(s *Server, c *Client) {
+
+	if c.Conn != nil {
+		s.Clients.ListDelNode(c.Node)
+		c.Node = nil
+		delete(s.ClientsMap, c.Id)
+		atomic.AddInt64(&s.StatConnCount, -1)
+		c.Conn.Close()
+		c.Conn = nil
+	}
+}
+
+func CloseClient(s *Server, c *Client) {
+	// fmt.Println("CloseClient")
+	c.ReadBuf = nil
+	c.ReplyWriter = nil
+	c.ResetArgv()
+	c.ProcessBuf = nil
+	c.ReplyWriter = nil
+	UnLinkClient(s, c)
+}
+
+func SelectDB(s *Server, c *Client, dbId int) int {
+	if dbId < 0 || dbId >= s.DbNum {
+		return C_ERR
+	}
+	c.Db = s.Dbs[dbId]
+	return C_OK
+}
+
+func DbDeleteSync(s *Server, c *Client, key string) bool {
+	// TODO expire things
+	c.Db.Delete(key)
+	return true
+}
+
+func DbDeleteAsync(s *Server, c *Client, key string) bool {
+	// TODO
+	c.Db.Delete(key)
+	return true
 }
