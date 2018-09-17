@@ -244,7 +244,6 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int {
 		c.ProcessBuf.ReadByte() // pass the \n
 		c.MultiBulkLen = bulkNum
 		c.Argv = make([]string, c.MultiBulkLen)
-		// fmt.Println("c.MultiBulkLen", c.MultiBulkLen)
 	}
 	if c.MultiBulkLen < 0 {
 		return C_ERR
@@ -254,19 +253,16 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int {
 		dollar, err := c.ProcessBuf.ReadByte()
 		if err != nil || dollar != '$' {
 			AddReplyError(s, c, fmt.Sprintf("Protocol error: expected '$', got '%c'", dollar))
-			//SetProtocolError(s, c, "expected $ but got something else", 0)
 			return C_ERR
 		}
 		bulkLenStr, err := c.ProcessBuf.ReadStringExclude('\r')
 		if err != nil {
 			AddReplyError(s, c, fmt.Sprintf("Protocol error: invalid bulk length"))
-			//SetProtocolError(s, c, "invalid bulk length", 0)
 			return C_ERR
 		}
 		bulkLen, err := strconv.Atoi(bulkLenStr)
 		if err != nil || bulkLen > s.ProtoMaxBulkLen {
 			AddReplyError(s, c, "Protocol error: invalid bulk length")
-			//SetProtocolError(s, c, "invalid bulk length", 0)
 			return C_ERR
 		}
 		c.ProcessBuf.ReadByte() // pass the \n
@@ -274,33 +270,26 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int {
 		bulk := c.ProcessBuf.Next(bulkLen)
 		if len(bulk) != bulkLen {
 			AddReplyError(s, c, "Protocol error: invalid bulk format")
-			//SetProtocolError(s, c, "invalid bulk format", 0)
 			return C_ERR
 		}
 		cr, _ := c.ProcessBuf.ReadByte()
 		lf, _ := c.ProcessBuf.ReadByte()
 		if cr != '\r' || lf != '\n' {
 			AddReplyError(s, c, "Protocol error: invalid bulk format")
-			//SetProtocolError(s, c, "invalid bulk format", 0)
 			return C_ERR
 		}
 		c.Argv[len(c.Argv)-c.MultiBulkLen] = string(bulk)
-		// fmt.Println("c.MultiBulkLen:", c.MultiBulkLen, ", c.Argv:", c.Argv)
 		c.Argc++
 		c.MultiBulkLen--
 	}
 	if c.MultiBulkLen == 0 {
-		// fmt.Println("ProcessMultiBulkBuffer", "OK")
 		return C_OK
 	}
-	// fmt.Println("ProcessMultiBulkBuffer", "ERR")
 	return C_ERR
 }
 
 func ProcessInputBuffer(s *Server, c *Client) {
 	// fmt.Println("ProcessInputBuffer")
-	c.mutex.Lock()
-
 	if c.RequestType == 0 {
 		firstByte, _ := c.ProcessBuf.ReadByteNotGoForward()
 		if firstByte == '*' {
@@ -323,7 +312,6 @@ func ProcessInputBuffer(s *Server, c *Client) {
 	if c.Argc != 0 {
 		ProcessCommand(s, c)
 	}
-	c.mutex.Unlock()
 }
 
 // Write data in output buffers to client.
@@ -338,13 +326,12 @@ func WriteToClient(s *Server, c *Client) {
 func ProcessQuery(s *Server, c *Client) {
 	ProcessInputBuffer(s, c)
 	WriteToClient(s, c)
+	c.Reset()
 }
 
-func ReadQuery(s *Server, c *Client, readFinish chan int) {
+func ReadQuery(s *Server, c *Client, queryFinish chan int) {
 	// wait write send the signal
 	c.QueryCount++
-	c.ResetReadStatus()
-	
 	reader := bufio.NewReaderSize(c.Conn, PROTO_IOBUF_LEN)
 	for {
 		recieved, err := reader.ReadBytes(0)
@@ -353,39 +340,31 @@ func ReadQuery(s *Server, c *Client, readFinish chan int) {
 			return
 		}
 		if len(recieved) > 0 {
-			c.ReadBuf = append(c.ReadBuf, recieved...)
+			c.ProcessBuf.Write(recieved)
 		}
 		if err == nil {
 			break
-		} else {
-			panic("buf full")
 		}
 	}
-
 	c.SetLastInteraction(s.UnixTime)
-	atomic.AddInt64(&s.StatNetInputBytes, int64(len(c.ReadBuf)))
-	c.mutex.Lock()
-	c.ResetProcessStatus()
-	c.ProcessBuf.Write(c.ReadBuf)
-	close(readFinish)
-	c.mutex.Unlock()
-	go ProcessQuery(s, c)
-
+	atomic.AddInt64(&s.StatNetInputBytes, int64(c.ProcessBuf.Len()))
+	ProcessQuery(s, c)
+	close(queryFinish)
 }
 
 func ProcessQueryLoop(s *Server, c *Client) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 	for {
-		readFinish := make(chan int, 1)
-		go ReadQuery(s, c, readFinish)
+		queryFinish := make(chan int, 1)
+		go ReadQuery(s, c, queryFinish)
 		
 		select {
 		case <-c.CloseCh:
 			// server closed, broadcast
-			close(readFinish)
+			close(queryFinish)
 			return
-		case <-readFinish:
+		case <-queryFinish:
 			// query processing finished
 		}
 	}

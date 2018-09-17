@@ -135,11 +135,8 @@ func (c *Client) ResetArgv() {
 	c.Argv = nil
 }
 
-func (c *Client) ResetReadStatus() {
-	c.ReadBuf=make([]byte, 0)
-}
 
-func (c *Client) ResetProcessStatus() {
+func (c *Client) Reset() {
 	c.ResetArgv()
 	c.RequestType = 0
 	c.MultiBulkLen = 0
