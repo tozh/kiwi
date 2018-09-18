@@ -7,7 +7,7 @@ import (
 	"kiwi/src/evio"
 )
 
-type Client struct {
+type KiwiClient struct {
 	Id              int64
 	Conn            evio.Conn
 	Db              *Db
@@ -28,27 +28,31 @@ type Client struct {
 	QueryCount      int
 }
 
-func (c *Client) GetLastInteraction() time.Time {
+func (c *KiwiClient) GetConn() Conn {
+	return c.Conn
+}
+
+func (c *KiwiClient) GetLastInteraction() time.Time {
 	return c.LastInteraction
 }
 
-func (c *Client) SetLastInteraction() {
+func (c *KiwiClient) SetLastInteraction() {
 	c.LastInteraction = LruClock()
 }
 
-func (c *Client) WithFlags(flags int) bool {
+func (c *KiwiClient) WithFlags(flags int) bool {
 	return c.Flags&flags != 0
 }
 
-func (c *Client) AddFlags(flags int) {
+func (c *KiwiClient) AddFlags(flags int) {
 	c.Flags |= flags
 }
 
-func (c *Client) DeleteFlags(flags int) {
+func (c *KiwiClient) DeleteFlags(flags int) {
 	c.Flags &= ^flags
 }
 
-func (c *Client) GeneratePeerId(s *Server) {
+func (c *KiwiClient) GeneratePeerId(s *Server) {
 	if c.WithFlags(CLIENT_UNIX_SOCKET) {
 		c.PeerId = fmt.Sprintf("%s:0", s.UnixSocketPath)
 	} else {
@@ -56,19 +60,19 @@ func (c *Client) GeneratePeerId(s *Server) {
 	}
 }
 
-func (c *Client) GetPeerId(s *Server) string {
+func (c *KiwiClient) GetPeerId(s *Server) string {
 	if c.PeerId == "" {
 		c.GeneratePeerId(s)
 	}
 	return c.PeerId
 }
 
-func (c *Client) GetNextClientId() {
+func (c *KiwiClient) GetNextClientId() {
 	c.Id = atomic.LoadInt64(&kiwiS.NextClientId)
 	atomic.AddInt64(&kiwiS.NextClientId, 1)
 }
 
-func (c *Client) GetClientType() int {
+func (c *KiwiClient) GetClientType() int {
 	if c.WithFlags(CLIENT_MASTER) {
 		return CLIENT_TYPE_MASTER
 	}
@@ -81,7 +85,7 @@ func (c *Client) GetClientType() int {
 	return CLIENT_TYPE_NORMAL
 }
 
-func (c *Client) GetClientTypeByName(name string) int {
+func (c *KiwiClient) GetClientTypeByName(name string) int {
 	switch name {
 	case "normal":
 		return CLIENT_TYPE_NORMAL
@@ -96,7 +100,7 @@ func (c *Client) GetClientTypeByName(name string) int {
 	}
 }
 
-func (c *Client) GetClientTypeName(ctype int) string {
+func (c *KiwiClient) GetClientTypeName(ctype int) string {
 	switch ctype {
 	case CLIENT_TYPE_NORMAL:
 		return "normal"
@@ -111,13 +115,13 @@ func (c *Client) GetClientTypeName(ctype int) string {
 	}
 }
 
-func (c *Client) ResetArgv() {
+func (c *KiwiClient) ResetArgv() {
 	c.Argc = 0
 	c.Cmd = nil
 	c.Argv = nil
 }
 
-func (c *Client) Reset(in []byte) {
+func (c *KiwiClient) Reset(in []byte) {
 	if len(in) > 0 {
 		c.InBuf = NewLargeBuffer(in)
 	} else {
@@ -129,23 +133,17 @@ func (c *Client) Reset(in []byte) {
 	c.OutBuf.Reset()
 }
 
-func (c *Client) PrepareClientToWrite() int {
-	// fmt.Println("PrepareClientToWrite")
-
+func (c *KiwiClient) PrepareClientToWrite() int {
 	if c.WithFlags(CLIENT_REPLY_OFF | CLIENT_REPLY_SKIP) {
-		// fmt.Println("PrepareClientToWrite111111")
 		return C_ERR
 	}
 	if c.Conn == nil {
-		// fmt.Println("PrepareClientToWrite222222")
 		return C_ERR
 	}
-	// fmt.Println("PrepareClientToWrite-------OK")
-
 	return C_OK
 }
 
-func CatClientInfoString(c *Client) string {
+func CatClientInfoString(c *KiwiClient) string {
 	flags := Buffer{}
 	if c.WithFlags(CLIENT_SLAVE) {
 		if c.WithFlags(CLIENT_MONITOR) {
@@ -198,9 +196,9 @@ func CatClientInfoString(c *Client) string {
 		kiwiS.UnixTime.Sub(c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.id, cmd)
 }
 
-func CreateClient(conn evio.Conn, flags int) *Client {
+func CreateClient(conn evio.Conn, flags int) (c *KiwiClient, action Action) {
 	createTime := kiwiS.UnixTime
-	c := Client{
+	c = &KiwiClient{
 		Id:              0,
 		Conn:            conn,
 		Name:            "",
@@ -218,34 +216,36 @@ func CreateClient(conn evio.Conn, flags int) *Client {
 		QueryCount:      0,
 	}
 	c.GetNextClientId()
-	SelectDB(&c, 0)
-	LinkClient(&c)
-	return &c
+	SelectDB(c, 0)
+	LinkClient(c)
+	return c, None
 }
 
-func LinkClient(c *Client) {
+func LinkClient(c *KiwiClient) {
 	kiwiS.Clients.ListAddNodeTail(c)
 	kiwiS.ClientsMap[c.Id] = c
 	c.Node = kiwiS.Clients.ListTail()
 	atomic.AddInt64(&kiwiS.StatConnCount, 1)
 }
 
-func UnLinkClient(c *Client) {
+func UnLinkClient(c *KiwiClient) {
 	kiwiS.Clients.ListDelNode(c.Node)
 	c.Node = nil
 	delete(kiwiS.ClientsMap, c.Id)
 	atomic.AddInt64(&kiwiS.StatConnCount, -1)
 }
 
-func CloseClient(c *Client) {
-	c.ResetArgv()
-	c.InBuf = nil
-	c.OutBuf = nil
-	c.Conn = nil
-	UnLinkClient(c)
+func CloseClient(c *KiwiClient) {
+	if c != nil {
+		c.ResetArgv()
+		c.InBuf = nil
+		c.OutBuf = nil
+		c.Conn = nil
+		UnLinkClient(c)
+	}
 }
 
-func SelectDB(c *Client, dbId int) int {
+func SelectDB(c *KiwiClient, dbId int) int {
 	if dbId < 0 || dbId >= kiwiS.DbNum {
 		return C_ERR
 	}
@@ -253,13 +253,13 @@ func SelectDB(c *Client, dbId int) int {
 	return C_OK
 }
 
-func DbDeleteSync(c *Client, key string) bool {
+func DbDeleteSync(c *KiwiClient, key string) bool {
 	// TODO expire things
 	c.Db.Delete(key)
 	return true
 }
 
-func DbDeleteAsync(c *Client, key string) bool {
+func DbDeleteAsync(c *KiwiClient, key string) bool {
 	// TODO
 	c.Db.Delete(key)
 	return true

@@ -21,11 +21,11 @@ func reusePortListen(proto, addr string) (l net.Listener, err error) {
 }
 
 type loop struct {
-	idx    int             // loop index in the mpEventServer loops list
-	poll   *internal.Poll  // epoll or kqueue
-	buf    []byte          // read packet buffer
-	fdclis map[int]*Client /// loop connections fd -> clients
-	count  int32           // connection count
+	idx    int                 // loop index in the mpEventServer loops list
+	poll   *internal.Poll      // epoll or kqueue
+	buf    []byte              // read packet buffer
+	fdclis map[int] Client /// loop connections fd -> clients
+	count  int32               // connection count
 }
 
 type conn struct {
@@ -205,7 +205,7 @@ func mpServe(events Events, listeners []*listener) error {
 			idx:    i,
 			poll:   internal.OpenPoll(),
 			buf:    make([]byte, 0xFFFF),
-			fdclis: make(map[int]*Client),
+			fdclis: make(map[int]Client),
 		}
 		for _, ln := range mpes.lns {
 			l.poll.AddRead(ln.fd)
@@ -220,10 +220,11 @@ func mpServe(events Events, listeners []*listener) error {
 	return nil
 }
 
-func loopCloseConn(mpes *mpEventServer, l *loop, c *Client, err error) error {
+func loopCloseConn(mpes *mpEventServer, l *loop, c Client, err error) error {
+	conn := c.GetConn().(*conn)
 	atomic.AddInt32(&l.count, -1)
-	delete(l.fdclis, c.Conn.(*conn).fd)
-	syscall.Close(c.Conn.(*conn).fd)
+	delete(l.fdclis, conn.fd)
+	syscall.Close(conn.fd)
 	if mpes.events.Closed != nil {
 		switch mpes.events.Closed(c, err) {
 		case None:
@@ -234,17 +235,18 @@ func loopCloseConn(mpes *mpEventServer, l *loop, c *Client, err error) error {
 	return nil
 }
 
-func loopDetachConn(mpes *mpEventServer, l *loop, c *Client, err error) error {
+func loopDetachConn(mpes *mpEventServer, l *loop, c Client, err error) error {
+	conn := c.GetConn().(*conn)
 	if mpes.events.Detached == nil {
 		return loopCloseConn(mpes, l, c, err)
 	}
-	l.poll.ModDetach(c.Conn.(*conn).fd)
+	l.poll.ModDetach(conn.fd)
 	atomic.AddInt32(&l.count, -1)
-	delete(l.fdclis, c.Conn.(*conn).fd)
-	if err := syscall.SetNonblock(c.Conn.(*conn).fd, false); err != nil {
+	delete(l.fdclis, conn.fd)
+	if err := syscall.SetNonblock(conn.fd, false); err != nil {
 		return err
 	}
-	switch mpes.events.Detached(c, &detachedConn{fd: c.Conn.(*conn).fd}) {
+	switch mpes.events.Detached(c, &detachedConn{fd: conn.fd}) {
 	case None:
 	case Shutdown:
 		return errClosing
@@ -295,7 +297,7 @@ func loopRun(mpes *mpEventServer, l *loop) {
 			return loopNote(mpes, l, note)
 		}
 		c := l.fdclis[fd]
-		conn := c.Conn.(*conn)
+		conn := c.GetConn().(*conn)
 		switch {
 		case c == nil:
 			return loopAccept(mpes, l, fd)
@@ -347,9 +349,13 @@ func loopAccept(mpes *mpEventServer, l *loop, fd int) error {
 			if ln.network == "unix" {
 				flag |= CLIENT_UNIX_SOCKET
 			}
-			c := CreateClient(conn, flag)
-			l.fdclis[conn.fd] = c
 			l.poll.AddReadWrite(conn.fd)
+			c, action := mpes.events.Accepted(conn, flag)
+			if c == nil || action != None {
+				return
+				conn.action = action
+			}
+			l.fdclis[conn.fd] = c
 			atomic.AddInt32(&l.count, 1)
 			break
 		}
@@ -357,8 +363,8 @@ func loopAccept(mpes *mpEventServer, l *loop, fd int) error {
 	return nil
 }
 
-func loopOpened(mpes *mpEventServer, l *loop, c *Client) error {
-	conn := c.Conn.(*conn)
+func loopOpened(mpes *mpEventServer, l *loop, c Client) error {
+	conn := c.GetConn().(*conn)
 	conn.opened = true
 	conn.addrIndex = conn.lnidx
 	conn.remoteAddr = internal.SockaddrToAddr(conn.sa)
@@ -381,8 +387,8 @@ func loopOpened(mpes *mpEventServer, l *loop, c *Client) error {
 	return nil
 }
 
-func loopAction(mpes *mpEventServer, l *loop, c *Client) error {
-	conn := c.Conn.(*conn)
+func loopAction(mpes *mpEventServer, l *loop, c Client) error {
+	conn := c.GetConn().(*conn)
 	switch conn.action {
 	default:
 		conn.action = None
@@ -399,8 +405,8 @@ func loopAction(mpes *mpEventServer, l *loop, c *Client) error {
 	return nil
 }
 
-func loopRead(mpes *mpEventServer, l *loop, c *Client) error {
-	conn := c.Conn.(*conn)
+func loopRead(mpes *mpEventServer, l *loop, c Client) error {
+	conn := c.GetConn().(*conn)
 	var in []byte
 	n, err := syscall.Read(conn.fd, l.buf)
 	if n == 0 || err != nil {
@@ -426,8 +432,8 @@ func loopRead(mpes *mpEventServer, l *loop, c *Client) error {
 	return nil
 }
 
-func loopWrite(mpes *mpEventServer, l *loop, c *Client) error {
-	conn := c.Conn.(*conn)
+func loopWrite(mpes *mpEventServer, l *loop, c Client) error {
+	conn := c.GetConn().(*conn)
 	if mpes.events.PreWrite != nil {
 		mpes.events.PreWrite()
 	}

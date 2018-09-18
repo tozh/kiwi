@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 )
 
-func AddReply(c *Client, str string) {
+func AddReply(c *KiwiClient, str string) {
 	if c.PrepareClientToWrite() != C_OK {
 		return
 	}
@@ -17,7 +17,7 @@ func AddReply(c *Client, str string) {
 	atomic.AddInt64(&kiwiS.StatNetOutputBytes, int64(n))
 }
 
-func AddReplyStrObj(c *Client, o *StrObject) {
+func AddReplyStrObj(c *KiwiClient, o *StrObject) {
 	if !CheckOType(o, OBJ_RTYPE_STR) {
 		return
 	}
@@ -29,7 +29,7 @@ func AddReplyStrObj(c *Client, o *StrObject) {
 	}
 }
 
-func AddReplyError(c *Client, str string) {
+func AddReplyError(c *KiwiClient, str string) {
 	if len(str) != 0 || str[0] != '-' {
 		AddReply(c, "-ERR ")
 	}
@@ -37,23 +37,23 @@ func AddReplyError(c *Client, str string) {
 	AddReply(c, "\r\n")
 }
 
-func AddReplyErrorFormat(c *Client, format string, a ...interface{}) {
+func AddReplyErrorFormat(c *KiwiClient, format string, a ...interface{}) {
 	str := fmt.Sprintf(format, a)
 	AddReplyError(c, str)
 }
 
-func AddReplyStatus(c *Client, str string) {
+func AddReplyStatus(c *KiwiClient, str string) {
 	AddReply(c, "+")
 	AddReply(c, str)
 	AddReply(c, "\r\n")
 }
 
-func (s *Server) AddReplyStatusFormat(c *Client, format string, a ...interface{}) {
+func (s *Server) AddReplyStatusFormat(c *KiwiClient, format string, a ...interface{}) {
 	str := fmt.Sprintf(format, a)
 	AddReplyStatus(c, str)
 }
 
-//func (kiwiS *Server) AddReplyHelp(c *Client, help []string) {
+//func (kiwiS *Server) AddReplyHelp(c *KiwiClient, help []string) {
 //	cmd := c.Argv[0]
 //	kiwiS.AddReplyStatusFormat(c, "%kiwiS <subcommand> arg arg ... arg. Subcommands are:", cmd)
 //	for _, h := range help {
@@ -61,7 +61,7 @@ func (s *Server) AddReplyStatusFormat(c *Client, format string, a ...interface{}
 //	}
 //}
 
-func AddReplyIntWithPrifix(c *Client, i int, prefix byte) {
+func AddReplyIntWithPrifix(c *KiwiClient, i int, prefix byte) {
 	/* Things like $3\r\n or *2\r\n are emitted very often by the protocol
 	so we have a few shared objects to use if the integer is small
 	like it is most of the times. */
@@ -79,7 +79,7 @@ func AddReplyIntWithPrifix(c *Client, i int, prefix byte) {
 	}
 }
 
-func AddReplyInt(c *Client, i int) {
+func AddReplyInt(c *KiwiClient, i int) {
 	if i == 0 {
 		AddReply(c, kiwiS.Shared.Zero)
 	} else if i == 1 {
@@ -89,18 +89,18 @@ func AddReplyInt(c *Client, i int) {
 	}
 }
 
-func AddReplyMultiBulkLen(c *Client, length int) {
+func AddReplyMultiBulkLen(c *KiwiClient, length int) {
 	AddReplyIntWithPrifix(c, length, '*')
 }
 
 /* Create the length prefix of a bulk reply, example: $2234 */
-func AddReplyBulkLenOfStr(c *Client, str string) {
+func AddReplyBulkLenOfStr(c *KiwiClient, str string) {
 	length := len(str)
 	// fmt.Println(">>>>>>>>>>>>>>>>", length)
 	AddReplyIntWithPrifix(c, length, '$')
 }
 
-func AddReplyBulkStrObj(c *Client, o *StrObject) {
+func AddReplyBulkStrObj(c *KiwiClient, o *StrObject) {
 	if !CheckOType(o, OBJ_RTYPE_STR) {
 		return
 	}
@@ -115,7 +115,7 @@ func AddReplyBulkStrObj(c *Client, o *StrObject) {
 	AddReply(c, kiwiS.Shared.Crlf)
 }
 
-func AddReplyBulkStr(c *Client, str string) {
+func AddReplyBulkStr(c *KiwiClient, str string) {
 	if str == "" {
 		AddReply(c, kiwiS.Shared.NullBulk)
 	} else {
@@ -125,7 +125,7 @@ func AddReplyBulkStr(c *Client, str string) {
 	}
 }
 
-func AddReplyBulkInt(c *Client, i int) {
+func AddReplyBulkInt(c *KiwiClient, i int) {
 	str := strconv.Itoa(i)
 	AddReplyBulkStr(c, str)
 }
@@ -179,7 +179,7 @@ func AddReplyBulkInt(c *Client, i int) {
 //	AddBufferStatus(buf, str)
 //}
 //
-////func (kiwiS *Server) AddReplyHelp(c *Client, help []string) {
+////func (kiwiS *Server) AddReplyHelp(c *KiwiClient, help []string) {
 ////	cmd := c.Argv[0]
 ////	kiwiS.AddReplyStatusFormat(c, "%kiwiS <subcommand> arg arg ... arg. Subcommands are:", cmd)
 ////	for _, h := range help {

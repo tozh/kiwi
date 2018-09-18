@@ -70,6 +70,10 @@ type Conn interface {
 	RemoteAddr() net.Addr
 }
 
+type Client interface {
+	GetConn() Conn
+}
+
 type Events struct {
 	// NumLoops sets the number of loops to use for the mpEventServer. Setting this
 	// to a value greater than 1 will effectively make the mpEventServer
@@ -84,15 +88,20 @@ type Events struct {
 	LoadBalance LoadBalance
 
 	Serving func(es EventServer) (action Action)
+
+	// YOU HAVE TO DEFINCE THIS
+	Accepted func(conn Conn, flags int) (c Client, action Action)
+
 	// Opened fires when a new connection has opened.
 	// The info parameter has information about the connection such as
 	// it's local and remote address.
 	// Use the out return value to write data to the connection.
 	// The opts return value is used to set connection options.
-	Opened func(c *Client) (out []byte, opts Options, action Action)
+	Opened func(c Client) (out []byte, opts Options, action Action)
+
 	// Closed fires when a connection has closed.
 	// The err parameter is the last known connection error.
-	Closed func(c *Client, err error) (action Action)
+	Closed func(c Client, err error) (action Action)
 	// Detached fires when a connection has been previously detached.
 	// Once detached it's up to the receiver of this evio to manage the
 	// state of the connection. The Closed evio will not be called for
@@ -100,16 +109,16 @@ type Events struct {
 	// The conn parameter is a ReadWriteCloser that represents the
 	// underlying socket connection. It can be freely used in goroutines
 	// and should be closed when it's no longer needed.
-	Detached func(c *Client, rwc io.ReadWriteCloser) (action Action)
+	Detached func(c Client, rwc io.ReadWriteCloser) (action Action)
 	// PreWrite fires just before any data is written to any client socket.
 	PreWrite func()
 	// Data fires when a connection sends the mpEventServer data.
 	// The in parameter is the incoming data.
 	// Use the out return value to write data to the connection.
-	Data func(c *Client, in []byte) (out []byte, action Action)
+	Data func(c Client, in []byte) (out []byte, action Action)
 	// Written fires after sending data
 	// n is the length of conn.out
-	Written func(c *Client, n int) (action Action)
+	Written func(c Client, n int) (action Action)
 	// Tick fires immediately after the mpEventServer starts and will fire again
 	// following the duration specified by the delay return value.
 	Tick func() (delay time.Duration, action Action)
@@ -130,6 +139,8 @@ type Events struct {
 // The "tcp" network scheme is assumed when one is not specified.
 
 func EventServe(events Events, addr ...string) error {
+	kiwiS.wg.Add(1)
+	defer kiwiS.wg.Done()
 	var lns []*listener
 	defer func() {
 		for _, ln := range lns {

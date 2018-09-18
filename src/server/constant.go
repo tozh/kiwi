@@ -47,9 +47,9 @@ const SHARED_BULKHDR_LEN = 32
 const C_OK = 0
 const C_ERR = 1
 
-// Client flags
+// KiwiClient flags
 
-/* Client flags */
+/* KiwiClient flags */
 const CLIENT_SLAVE = 1 << 0             /* This client is a slave test_server */
 const CLIENT_MASTER = 1 << 1            /* This client is a master test_server */
 const CLIENT_MONITOR = 1 << 2           /* This client is a slave monitor, see MONITOR */
@@ -60,20 +60,20 @@ const CLIENT_CLOSE_AFTER_REPLY = 1 << 6 /* Close after writing entire reply. */
 const CLIENT_UNBLOCKED = 1 << 7         /* This client was unblocked and is stored in
                                   test_server.unblocked_clients */
 const CLIENT_LUA = 1 << 8                 /* This is a non connected client used by Lua */
-const CLIENT_ASKING = 1 << 9              /* Client issued the ASKING command */
+const CLIENT_ASKING = 1 << 9              /* KiwiClient issued the ASKING command */
 const CLIENT_CLOSE_ASAP = 1 << 10         /* Close this client ASAP */
-const CLIENT_UNIX_SOCKET = 1 << 11        /* Client connected via Unix domain socket */
+const CLIENT_UNIX_SOCKET = 1 << 11        /* KiwiClient connected via Unix domain socket */
 const CLIENT_DIRTY_EXEC = 1 << 12         /* EXEC will fail for errors while queueing */
 const CLIENT_MASTER_FORCE_REPLY = 1 << 13 /* Queue replies even if is master */
 const CLIENT_FORCE_AOF = 1 << 14          /* Force AOF propagation of current cmd. */
 const CLIENT_FORCE_REPL = 1 << 15         /* Force replication of current cmd. */
 const CLIENT_PRE_PSYNC = 1 << 16          /* Instance don't understand PSYNC. */
 const CLIENT_READONLY = 1 << 17           /* Cluster client is in read-only state. */
-const CLIENT_PUBSUB = 1 << 18             /* Client is in Pub/Sub mode. */
+const CLIENT_PUBSUB = 1 << 18             /* KiwiClient is in Pub/Sub mode. */
 const CLIENT_PREVENT_AOF_PROP = 1 << 19   /* Don't propagate to AOF. */
 const CLIENT_PREVENT_REPL_PROP = 1 << 20  /* Don't propagate to slaves. */
 const CLIENT_PREVENT_PROP = CLIENT_PREVENT_AOF_PROP | CLIENT_PREVENT_REPL_PROP
-const CLIENT_PENDING_WRITE = 1 << 21 /* Client has output to send but a write
+const CLIENT_PENDING_WRITE = 1 << 21 /* KiwiClient has output to send but a write
                                         handler is yet not installed. */
 const CLIENT_REPLY_OFF = 1 << 22       /* Don't send replies to client. */
 const CLIENT_REPLY_SKIP_NEXT = 1 << 23 /* Set CLIENT_REPLY_SKIP for next cmd */
@@ -82,11 +82,11 @@ const CLIENT_LUA_DEBUG = 1 << 25       /* Run EVAL in debug mode. */
 const CLIENT_LUA_DEBUG_SYNC = 1 << 26  /* EVAL debugging without fork() */
 const CLIENT_MODULE = 1 << 27          /* Non connected client used by some module. */
 
-/* Client request types */
+/* KiwiClient request types */
 const PROTO_REQ_INLINE = 1
 const PROTO_REQ_MULTIBULK = 2
 
-/* Client block type (btype field in client structure)
+/* KiwiClient block type (btype field in client structure)
  * if CLIENT_BLOCKED flag is set. */
 const BLOCKED_NONE = 0   /* Not blocked, no CLIENT_BLOCKED flag set. */
 const BLOCKED_LIST = 1   /* BLPOP & co. */
