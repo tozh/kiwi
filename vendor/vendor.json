@@ -3,10 +3,10 @@
 	"ignore": "test",
 	"package": [
 		{
-			"checksumSHA1": "RPanuxxQZvqA3fybvBASeA/s2Jo=",
-			"path": "github.com/tidwall/evio",
-			"revision": "3db0020933b5ae6646c7d06f3f1e2a012f4969f8",
-			"revisionTime": "2018-07-12T18:04:11Z"
+			"checksumSHA1": "jDMs5PLeguOPNiCWvxzv3tOy8K0=",
+			"path": "github.com/kavu/go_reuseport",
+			"revision": "ffa96de2479e10ecd06aca8069bf9c55a86701b5",
+			"revisionTime": "2018-08-25T10:15:11Z"
 		}
 	],
 	"rootPath": "kiwi"

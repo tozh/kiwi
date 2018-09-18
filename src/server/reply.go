@@ -2,12 +2,11 @@ package server
 
 import (
 	"strconv"
-	"strings"
 	"fmt"
 	"sync/atomic"
 )
 
-func AddReply(s *Server, c *Client, str string) {
+func AddReply(c *Client, str string) {
 	if c.PrepareClientToWrite() != C_OK {
 		return
 	}
@@ -15,123 +14,239 @@ func AddReply(s *Server, c *Client, str string) {
 	if err != nil {
 		return
 	}
-	atomic.AddInt64(&s.StatNetOutputBytes, int64(n))
+	atomic.AddInt64(&kiwiS.StatNetOutputBytes, int64(n))
 }
 
-func AddReplyStrObj(s *Server, c *Client, o *StrObject) {
+func AddReplyStrObj(c *Client, o *StrObject) {
 	if !CheckOType(o, OBJ_RTYPE_STR) {
 		return
 	}
 	str, err := GetStrObjectValueString(o)
 	if err == nil {
-		AddReply(s, c, str)
+		AddReply(c, str)
 	} else {
 		return
 	}
 }
 
-func AddReplyError(s *Server, c *Client, str string) {
+func AddReplyError(c *Client, str string) {
 	if len(str) != 0 || str[0] != '-' {
-		AddReply(s, c, "-ERR ")
+		AddReply(c, "-ERR ")
 	}
-	AddReply(s, c, str)
-	AddReply(s, c, "\r\n")
+	AddReply(c, str)
+	AddReply(c, "\r\n")
 }
 
-func AddReplyErrorFormat(s *Server, c *Client, format string, a ...interface{}) {
+func AddReplyErrorFormat(c *Client, format string, a ...interface{}) {
 	str := fmt.Sprintf(format, a)
-	AddReplyError(s, c, str)
+	AddReplyError(c, str)
 }
 
-func AddReplyStatus(s *Server, c *Client, str string) {
-	AddReply(s, c, "+")
-	AddReply(s, c, str)
-	AddReply(s, c, "\r\n")
+func AddReplyStatus(c *Client, str string) {
+	AddReply(c, "+")
+	AddReply(c, str)
+	AddReply(c, "\r\n")
 }
 
 func (s *Server) AddReplyStatusFormat(c *Client, format string, a ...interface{}) {
 	str := fmt.Sprintf(format, a)
-	AddReplyStatus(s, c, str)
+	AddReplyStatus(c, str)
 }
 
-//func (s *Server) AddReplyHelp(c *Client, help []string) {
+//func (kiwiS *Server) AddReplyHelp(c *Client, help []string) {
 //	cmd := c.Argv[0]
-//	s.AddReplyStatusFormat(c, "%s <subcommand> arg arg ... arg. Subcommands are:", cmd)
+//	kiwiS.AddReplyStatusFormat(c, "%kiwiS <subcommand> arg arg ... arg. Subcommands are:", cmd)
 //	for _, h := range help {
-//		s.AddReplyStatus(c, h)
+//		kiwiS.AddReplyStatus(c, h)
 //	}
 //}
 
-func AddReplyIntWithPrifix(s *Server, c *Client, i int, prefix byte) {
+func AddReplyIntWithPrifix(c *Client, i int, prefix byte) {
 	/* Things like $3\r\n or *2\r\n are emitted very often by the protocol
 	so we have a few shared objects to use if the integer is small
 	like it is most of the times. */
 	if prefix == '*' && i >= 0 && i < SHARED_BULKHDR_LEN {
-		AddReply(s, c, s.Shared.MultiBulkHDR[i])
+		AddReply(c, kiwiS.Shared.MultiBulkHDR[i])
 	} else if prefix == '$' && i >= 0 && i < SHARED_BULKHDR_LEN {
-		AddReply(s, c, s.Shared.BulkHDR[i])
+		AddReply(c, kiwiS.Shared.BulkHDR[i])
 	} else {
 		str := strconv.Itoa(i)
 		buf := Buffer{}
 		buf.WriteByte(prefix)
 		buf.WriteString(str)
 		buf.WriteString("\r\n")
-		AddReply(s, c, buf.String())
+		AddReply(c, buf.String())
 	}
 }
 
-func AddReplyInt(s *Server, c *Client, i int) {
+func AddReplyInt(c *Client, i int) {
 	if i == 0 {
-		AddReply(s, c, s.Shared.Zero)
+		AddReply(c, kiwiS.Shared.Zero)
 	} else if i == 1 {
-		AddReply(s, c, s.Shared.One)
+		AddReply(c, kiwiS.Shared.One)
 	} else {
-		AddReplyIntWithPrifix(s, c, i, ':')
+		AddReplyIntWithPrifix(c, i, ':')
 	}
 }
 
-func AddReplyMultiBulkLen(s *Server, c *Client, length int) {
-	AddReplyIntWithPrifix(s, c, length, '*')
+func AddReplyMultiBulkLen(c *Client, length int) {
+	AddReplyIntWithPrifix(c, length, '*')
 }
 
 /* Create the length prefix of a bulk reply, example: $2234 */
-func AddReplyBulkLenOfStr(s *Server, c *Client, str string) {
+func AddReplyBulkLenOfStr(c *Client, str string) {
 	length := len(str)
 	// fmt.Println(">>>>>>>>>>>>>>>>", length)
-	AddReplyIntWithPrifix(s, c, length, '$')
+	AddReplyIntWithPrifix(c, length, '$')
 }
 
-func AddReplyBulkStrObj(s *Server, c *Client, o *StrObject) {
+func AddReplyBulkStrObj(c *Client, o *StrObject) {
 	if !CheckOType(o, OBJ_RTYPE_STR) {
 		return
 	}
 	str, err := GetStrObjectValueString(o)
 	// fmt.Println(">>>>>>>>>>>>>>>>", str)
 	if err == nil {
-		AddReplyBulkLenOfStr(s, c, str)
+		AddReplyBulkLenOfStr(c, str)
 	} else {
 		return
 	}
-	AddReply(s, c, str)
-	AddReply(s, c, s.Shared.Crlf)
+	AddReply(c, str)
+	AddReply(c, kiwiS.Shared.Crlf)
 }
 
-func AddReplyBulkStr(s *Server, c *Client, str string) {
+func AddReplyBulkStr(c *Client, str string) {
 	if str == "" {
-		AddReply(s, c, s.Shared.NullBulk)
+		AddReply(c, kiwiS.Shared.NullBulk)
 	} else {
-		AddReplyBulkLenOfStr(s, c, str)
-		AddReply(s, c, str)
-		AddReply(s, c, s.Shared.Crlf)
+		AddReplyBulkLenOfStr(c, str)
+		AddReply(c, str)
+		AddReply(c, kiwiS.Shared.Crlf)
 	}
 }
 
-func AddReplyBulkInt(s *Server, c *Client, i int) {
+func AddReplyBulkInt(c *Client, i int) {
 	str := strconv.Itoa(i)
-	AddReplyBulkStr(s, c, str)
+	AddReplyBulkStr(c, str)
 }
 
-func AddReplySubcommandSyntaxError(s *Server, c *Client) {
-	cmd := c.Argv[0]
-	AddReplyErrorFormat(s, c, "Unknown subcommand or wrong number of arguments for '%s'. Try %s HELP.", cmd, strings.ToUpper(cmd))
+func AddBuffer(buf *Buffer, str string) {
+	buf.WriteString(str)
+}
+
+func AddBufferByte(buf *Buffer, b byte) {
+	buf.WriteByte(b)
+}
+
+func AddBufferBytes(buf *Buffer, b []byte) {
+	buf.Write(b)
+}
+
+func AddBufferStrObj(buf *Buffer, o *StrObject) {
+	if !CheckOType(o, OBJ_RTYPE_STR) {
+		return
+	}
+	str, err := GetStrObjectValueString(o)
+	if err == nil {
+		AddBuffer(buf, str)
+	} else {
+		return
+	}
+}
+
+func AddBufferError(buf *Buffer, str string) {
+	if len(str) != 0 || str[0] != '-' {
+		AddBuffer(buf, "-ERR ")
+	}
+	AddBuffer(buf, str)
+	AddBuffer(buf, "\r\n")
+}
+
+func AddBufferErrorFormat(buf *Buffer, format string, a ...interface{}) {
+	str := fmt.Sprintf(format, a)
+	AddBufferError(buf, str)
+}
+
+func AddBufferStatus(buf *Buffer, str string) {
+	AddBuffer(buf, "+")
+	AddBuffer(buf, str)
+	AddBuffer(buf, "\r\n")
+}
+
+func (s *Server) AddBufferStatusFormat(buf *Buffer, format string, a ...interface{}) {
+	str := fmt.Sprintf(format, a)
+	AddBufferStatus(buf, str)
+}
+
+//func (kiwiS *Server) AddReplyHelp(c *Client, help []string) {
+//	cmd := c.Argv[0]
+//	kiwiS.AddReplyStatusFormat(c, "%kiwiS <subcommand> arg arg ... arg. Subcommands are:", cmd)
+//	for _, h := range help {
+//		kiwiS.AddReplyStatus(c, h)
+//	}
+//}
+
+func AddBufferIntWithPrifix(buf *Buffer, i int, prefix byte) {
+	/* Things like $3\r\n or *2\r\n are emitted very often by the protocol
+	so we have a few shared objects to use if the integer is small
+	like it is most of the times. */
+	if prefix == '*' && i >= 0 && i < SHARED_BULKHDR_LEN {
+		AddBuffer(buf, kiwiS.Shared.MultiBulkHDR[i])
+	} else if prefix == '$' && i >= 0 && i < SHARED_BULKHDR_LEN {
+		AddBuffer(buf, kiwiS.Shared.BulkHDR[i])
+	} else {
+		AddBufferByte(buf, prefix)
+		AddBuffer(buf, strconv.Itoa(i))
+		AddBuffer(buf, "\r\n")
+	}
+}
+
+func AddBufferInt(buf *Buffer, i int) {
+	if i == 0 {
+		AddBuffer(buf, kiwiS.Shared.Zero)
+	} else if i == 1 {
+		AddBuffer(buf, kiwiS.Shared.One)
+	} else {
+		AddBufferIntWithPrifix(buf, i, ':')
+	}
+}
+
+func AddBufferMultiBulkLen(buf *Buffer, length int) {
+	AddBufferIntWithPrifix(buf, length, '*')
+}
+
+/* Create the length prefix of a bulk reply, example: $2234 */
+func AddBufferBulkLenOfStr(buf *Buffer, str string) {
+	length := len(str)
+	// fmt.Println(">>>>>>>>>>>>>>>>", length)
+	AddBufferIntWithPrifix(buf, length, '$')
+}
+
+func AddBufferBulkStrObj(buf *Buffer, o *StrObject) {
+	if !CheckOType(o, OBJ_RTYPE_STR) {
+		return
+	}
+	str, err := GetStrObjectValueString(o)
+	// fmt.Println(">>>>>>>>>>>>>>>>", str)
+	if err == nil {
+		AddBufferBulkLenOfStr(buf, str)
+	} else {
+		return
+	}
+	AddBuffer(buf, str)
+	AddBuffer(buf, kiwiS.Shared.Crlf)
+}
+
+func AddBufferBulkStr(buf *Buffer, str string) {
+	if str == "" {
+		AddBuffer(buf, kiwiS.Shared.NullBulk)
+	} else {
+		AddBufferBulkLenOfStr(buf, str)
+		AddBuffer(buf, str)
+		AddBuffer(buf, kiwiS.Shared.Crlf)
+	}
+}
+
+func AddBufferBulkInt(buf *Buffer, i int) {
+	AddBufferBulkStr(buf, strconv.Itoa(i))
 }

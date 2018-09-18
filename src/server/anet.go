@@ -12,7 +12,7 @@ func AnetSetErrorFormat(format string, a ...interface{}) string {
 
 func AnetSetTcpKeepALive(conn *net.TCPConn, keepalive bool) int {
 	if err := conn.SetKeepAlive(keepalive); err != nil {
-		AnetSetErrorFormat("Set tcp KeepAlive ---> %t, error: %s", keepalive, err)
+		AnetSetErrorFormat("Set tcp KeepAlive ---> %t, error: %kiwiS", keepalive, err)
 		return ANET_ERR
 	}
 	return ANET_OK
@@ -20,7 +20,7 @@ func AnetSetTcpKeepALive(conn *net.TCPConn, keepalive bool) int {
 
 func AnetSetTcpNoDelay(conn *net.TCPConn, noDelay bool) int {
 	if err := conn.SetNoDelay(noDelay); err != nil {
-		AnetSetErrorFormat("Set tcp NoDelay ---> %t, error: %s", noDelay, err)
+		AnetSetErrorFormat("Set tcp NoDelay ---> %t, error: %kiwiS", noDelay, err)
 		return ANET_ERR
 	}
 	return ANET_OK
@@ -28,14 +28,14 @@ func AnetSetTcpNoDelay(conn *net.TCPConn, noDelay bool) int {
 
 func AnetSetTimeout(conn *net.TCPConn, timeMs int) int {
 	if err := conn.SetDeadline(time.Now().Add(time.Millisecond * time.Duration(timeMs))); err != nil {
-		AnetSetErrorFormat("Set Timeout(ms) ---> %d, error: %s", timeMs, err)
+		AnetSetErrorFormat("Set Timeout(ms) ---> %d, error: %kiwiS", timeMs, err)
 		return ANET_ERR
 	}
 	return ANET_OK
 }
 
 func AnetTcpAddress(ip string, port int) string {
-	return fmt.Sprintf("%s:%d", ip, port)
+	return fmt.Sprintf("%kiwiS:%d", ip, port)
 }
 
 func AnetListenUnix(address string) *net.UnixListener {
@@ -47,7 +47,7 @@ func AnetListenUnix(address string) *net.UnixListener {
 	listener, err2 := net.ListenUnix("unix", addr)
 	if err2 != nil {
 		// fmt.Println("2 --------> ", err2)
-		AnetSetErrorFormat("Listen err2: %s", err2)
+		AnetSetErrorFormat("Listen err2: %kiwiS", err2)
 		return nil
 	}
 	return listener
@@ -62,7 +62,7 @@ func AnetListenTcp(tcpType string, ip string, port int) *net.TCPListener {
 	}
 	listener, err2 := net.ListenTCP(tcpType, address)
 	if err2 != nil {
-		AnetSetErrorFormat("Listen error: %s", err2)
+		AnetSetErrorFormat("Listen error: %kiwiS", err2)
 		return nil
 	}
 	return listener

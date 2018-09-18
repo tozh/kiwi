@@ -45,22 +45,22 @@ func GetStrObjectValueString(o *StrObject) (string, error) {
 	return "", errors.New("not StrObject")
 }
 
-func CreateStrObjectByStr(s *Server, str string) *StrObject {
-	obj := CreateObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_STR)
+func CreateStrObjectByStr(str string) *StrObject {
+	obj := CreateObject(OBJ_RTYPE_STR, OBJ_ENCODING_STR)
 	o := StrObject{
 		Object: obj,
 		Value:  &str,
 	}
-	return StrObjectEncode(s, &o)
+	return StrObjectEncode(&o)
 }
 
-func CreateStrObjectByInt(s *Server, i int) *StrObject {
+func CreateStrObjectByInt(i int) *StrObject {
 	if IsSharedInt(i) {
-		o := s.Shared.Integers[i]
+		o := kiwiS.Shared.Integers[i]
 		//o.IncrRefCount()
 		return o
 	}
-	obj := CreateObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_INT)
+	obj := CreateObject(OBJ_RTYPE_STR, OBJ_ENCODING_INT)
 	o := StrObject{
 		Object: obj,
 		Value:  &i,
@@ -68,18 +68,18 @@ func CreateStrObjectByInt(s *Server, i int) *StrObject {
 	return &o
 }
 
-func ReplaceStrObjectByInt(s *Server, o *StrObject, oldValue *int, newValue *int) *StrObject {
+func ReplaceStrObjectByInt(o *StrObject, oldValue *int, newValue *int) *StrObject {
 	if !IsSharedInt(*oldValue) && !IsSharedInt(*newValue) {
 		o.Value = newValue
-		o.RefreshLRUClock(s)
+		o.RefreshLRUClock()
 		return o
 	} else {
 		//o.DecrRefCount()
-		return CreateStrObjectByInt(s, *newValue)
+		return CreateStrObjectByInt(*newValue)
 	}
 }
 
-func AppendStrObject(s *Server, o *StrObject, b string) (*StrObject, int) {
+func AppendStrObject(o *StrObject, b string) (*StrObject, int) {
 	var length int
 	if b == "" {
 		length = StrObjectLength(o)
@@ -97,10 +97,10 @@ func AppendStrObject(s *Server, o *StrObject, b string) (*StrObject, int) {
 		o.setEncode(OBJ_ENCODING_STR)
 		length = len(str)
 	}
-	return StrObjectEncode(s, o), length
+	return StrObjectEncode(o), length
 }
 
-func StrObjectEncode(s *Server, o *StrObject) *StrObject {
+func StrObjectEncode(o *StrObject) *StrObject {
 	if !IsStrObjectString(o) {
 		return o
 	}
@@ -109,8 +109,8 @@ func StrObjectEncode(s *Server, o *StrObject) *StrObject {
 	if err == nil {
 		if IsSharedInt(i) {
 			//o.DecrRefCount()
-			//s.Shared.Integers[i].IncrRefCount()
-			return s.Shared.Integers[i]
+			//kiwiS.Shared.Integers[i].IncrRefCount()
+			return kiwiS.Shared.Integers[i]
 		} else {
 			o.Value = &i
 			o.setEncode(OBJ_ENCODING_INT)
@@ -134,10 +134,10 @@ func StrObjectLength(o *StrObject) int {
 
 /* Get a decoded version of an encoded object (returned as a new object).
  * If the object is already raw-encoded just increment the ref count. */
-func StrObjectDecode(s *Server, o *StrObject) *StrObject {
+func StrObjectDecode(o *StrObject) *StrObject {
 	if IsStrObjectInt(o) {
 		str := strconv.Itoa(*o.Value.(*int))
-		return CreateStrObjectByStr(s, str)
+		return CreateStrObjectByStr(str)
 	}
 	return o
 }
@@ -157,7 +157,7 @@ func CatString(a string, b string) string {
 	return buf.String()
 }
 
-/* Split a line into arguments, where every argument can be in the
+/* Split a line into argument where every argument can be in the
  * following programming-language REPL-alike form:
  *
  * foo bar "newline are supported\n" and "\xff\x00otherstuff"
@@ -171,7 +171,7 @@ func CatString(a string, b string) string {
  * Note that sdscatrepr() is able to convert back a string into
  * a quoted string in the same format sdssplitargs() is able to parse.
  *
- * The function returns the allocated tokens on success, even when the
+ * The function returns the allocated tokens on succes even when the
  * input string is empty, or NULL if the input contains unbalanced
  * quotes or closed quotes followed by non space characters
  * as in: "foo"bar or "foo'
@@ -323,14 +323,13 @@ func HexDigitToInt(b byte) byte {
 }
 
 func IndexOfBytes(buf []byte, start int, end int, target byte) int {
-	for i := start; i<end; i++ {
+	for i := start; i < end; i++ {
 		if buf[i] == target {
 			return i
 		}
 	}
 	return -1
 }
-
 
 func getStrByStrObject(key *StrObject) string {
 	if key.Encoding == OBJ_ENCODING_INT {

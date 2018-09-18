@@ -12,17 +12,17 @@ import (
 	"time"
 )
 
-// Action is an action that occurs after the completion of an event.
+// Action is an action that occurs after the completion of an evio.
 type Action int
 
 const (
-	// None indicates that no action should occur following an event.
+	// None indicates that no action should occur following an evio.
 	None Action = iota
 	// Detach detaches a connection. Not available for UDP connections.
 	Detach
 	// Close closes the connection.
 	Close
-	// Shutdown shutdowns the server.
+	// Shutdown shutdowns the mpserver.
 	Shutdown
 )
 
@@ -34,17 +34,17 @@ type Options struct {
 	// same input packet buffer with all other connections that also use
 	// this option.
 	// Default value is false, which means that all input data which is
-	// passed to the Data event will be a uniquely copied []byte slice.
+	// passed to the Data evio will be a uniquely copied []byte slice.
 	ReuseInputBuffer bool
 }
 
-// Server represents a server context which provides information about the
-// running server and has control functions for managing state.
-type Server struct {
+// EvioServer represents a mpserver context which provides information about the
+// running mpserver and has control functions for managing state.
+type EvioServer struct {
 	// The addrs parameter is an array of listening addresses that align
 	// with the addr strings passed to the Serve function.
 	Addrs []net.Addr
-	// NumLoops is the number of loops that the server is using.
+	// NumLoops is the number of loops that the mpserver is using.
 	NumLoops int
 }
 
@@ -54,7 +54,7 @@ type Conn interface {
 	Context() interface{}
 	// SetContext sets a user-defined context.
 	SetContext(interface{})
-	// AddrIndex is the index of server address that was passed to the Serve call.
+	// AddrIndex is the index of mpserver address that was passed to the Serve call.
 	AddrIndex() int
 	// LocalAddr is the connection's local socket address.
 	LocalAddr() net.Addr
@@ -76,24 +76,24 @@ const (
 	LeastConnections
 )
 
-// Events represents the server events for the Serve call.
-// Each event has an Action return value that is used manage the state
-// of the connection and server.
+// Events represents the mpserver events for the Serve call.
+// Each evio has an Action return value that is used manage the state
+// of the connection and mpserver.
 type Events struct {
-	// NumLoops sets the number of loops to use for the server. Setting this
-	// to a value greater than 1 will effectively make the server
+	// NumLoops sets the number of loops to use for the mpserver. Setting this
+	// to a value greater than 1 will effectively make the mpserver
 	// multithreaded for multi-core machines. Which means you must take care
-	// with synchonizing memory between all event callbacks. Setting to 0 or 1
-	// will run the server single-threaded. Setting to -1 will automatically
+	// with synchonizing memory between all evio callbacks. Setting to 0 or 1
+	// will run the mpserver single-threaded. Setting to -1 will automatically
 	// assign this value equal to runtime.NumProcs().
 	NumLoops int
 	// LoadBalance sets the load balancing method. Load balancing is always a
 	// best effort to attempt to distribute the incoming connections between
 	// multiple loops. This option is only works when NumLoops is set.
 	LoadBalance LoadBalance
-	// Serving fires when the server can accept connections. The server
+	// Serving fires when the mpserver can accept connections. The mpserver
 	// parameter has information and various utilities.
-	Serving func(server Server) (action Action)
+	Serving func(esr EvioServer) (action Action)
 	// Opened fires when a new connection has opened.
 	// The info parameter has information about the connection such as
 	// it's local and remote address.
@@ -104,8 +104,8 @@ type Events struct {
 	// The err parameter is the last known connection error.
 	Closed func(c Conn, err error) (action Action)
 	// Detached fires when a connection has been previously detached.
-	// Once detached it's up to the receiver of this event to manage the
-	// state of the connection. The Closed event will not be called for
+	// Once detached it's up to the receiver of this evio to manage the
+	// state of the connection. The Closed evio will not be called for
 	// this connection.
 	// The conn parameter is a ReadWriteCloser that represents the
 	// underlying socket connection. It can be freely used in goroutines
@@ -113,11 +113,11 @@ type Events struct {
 	Detached func(c Conn, rwc io.ReadWriteCloser) (action Action)
 	// PreWrite fires just before any data is written to any client socket.
 	PreWrite func()
-	// Data fires when a connection sends the server data.
+	// Data fires when a connection sends the mpserver data.
 	// The in parameter is the incoming data.
 	// Use the out return value to write data to the connection.
 	Data func(c Conn, in []byte) (out []byte, action Action)
-	// Tick fires immediately after the server starts and will fire again
+	// Tick fires immediately after the mpserver starts and will fire again
 	// following the duration specified by the delay return value.
 	Tick func() (delay time.Duration, action Action)
 }
@@ -161,7 +161,7 @@ func Serve(events Events, addr ...string) error {
 			} else {
 				ln.pconn, err = net.ListenPacket(ln.network, ln.addr)
 			}
-		} else { //tcp
+		} else {
 			if ln.opts.reusePort {
 				ln.ln, err = reuseportListen(ln.network, ln.addr)
 			} else {
@@ -186,11 +186,11 @@ func Serve(events Events, addr ...string) error {
 	if stdlib {
 		return stdserve(events, lns)
 	}
-	return serve(events, lns)
+	return mpserve(events, lns)
 }
 
 // InputStream is a helper type for managing input streams from inside
-// the Data event.
+// the Data evio.
 type InputStream struct{ b []byte }
 
 // Begin accepts a new packet and returns a working sequence of

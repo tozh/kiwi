@@ -25,8 +25,8 @@ type Shared struct {
 	BulkHDR        [SHARED_BULKHDR_LEN]string // "$<value>\r\n"
 }
 
-func CreateShared(s *Server) *Shared {
-	s.ServerLogDebugF("-->%v\n", "CreateShared")
+func CreateShared() *Shared {
+	kiwiS.ServerLogDebugF("-->%v\n", "CreateShared")
 
 	so := Shared{
 		Crlf:           "\r\n",
@@ -48,19 +48,19 @@ func CreateShared(s *Server) *Shared {
 		MultiBulkHDR:   [SHARED_BULKHDR_LEN]string{}, // "*<value>\r\n"
 		BulkHDR:        [SHARED_BULKHDR_LEN]string{}, // "$<value>\r\n"
 	}
-	for i:=0; i<SHARED_INTEGERS; i++ {
+	for i := 0; i < SHARED_INTEGERS; i++ {
 		v := i
 		so.Integers[i] = &StrObject{
-			CreateObject(s, OBJ_RTYPE_STR, OBJ_ENCODING_INT),
+			CreateObject(OBJ_RTYPE_STR, OBJ_ENCODING_INT),
 			&v,
 		}
 	}
-	for i:=0; i<SHARED_BULKHDR_LEN; i++ {
+	for i := 0; i < SHARED_BULKHDR_LEN; i++ {
 		so.MultiBulkHDR[i] = fmt.Sprintf("*%d\r\n", i)
 	}
-	for i:=0; i<SHARED_BULKHDR_LEN; i++ {
+	for i := 0; i < SHARED_BULKHDR_LEN; i++ {
 		so.BulkHDR[i] = fmt.Sprintf("$%d\r\n", i)
 	}
-	s.Shared = &so
-	return s.Shared
+	kiwiS.Shared = &so
+	return kiwiS.Shared
 }

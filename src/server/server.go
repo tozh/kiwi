@@ -68,10 +68,13 @@ type Server struct {
 	wg                   sync.WaitGroup
 }
 
-//func SetProtocolError(s *Server, c *Client, err string, pos int) {
-//	s.ServerLogErrorF("%s\n", err)
-//	if s.LogLevel <= LL_INFO {
-//		errorStr := fmt.Sprintf("Query buffer during protocol error: '%s'", c.ReadBuf)
+
+var kiwiS *Server
+
+//func SetProtocolError(c *Client, err string, pos int) {
+//	kiwiS.ServerLogErrorF("%kiwiS\n", err)
+//	if kiwiS.LogLevel <= LL_INFO {
+//		errorStr := fmt.Sprintf("Query buffer during protocol error: '%kiwiS'", c.ReadBuf)
 //		buf := make([]byte, len(errorStr))
 //		for i := 0; i < len(errorStr); i++ {
 //			if strconv.IsPrint(rune(errorStr[i])) {
@@ -84,23 +87,23 @@ type Server struct {
 //	}
 //}
 
-func GetAllClientInfoString(s *Server, ctype int) string {
+func GetAllClientInfoString(ctype int) string {
 	str := Buffer{}
-	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
+	iter := kiwiS.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
 		c := node.Value.(*Client)
 		if ctype != -1 && c.GetClientType() != ctype {
 			continue
 		}
-		str.WriteString(CatClientInfoString(s, c))
+		str.WriteString(CatClientInfoString(c))
 		str.WriteByte('\n')
 	}
 	return str.String()
 }
 
-func LruClock(s *Server) time.Time {
-	if 1000/s.Hz <= LRU_CLOCK_RESOLUTION {
-		return s.LruClock
+func LruClock() time.Time {
+	if 1000/kiwiS.Hz <= LRU_CLOCK_RESOLUTION {
+		return kiwiS.LruClock
 	} else {
 		return GetLruClock()
 	}
@@ -110,83 +113,83 @@ func GetLruClock() time.Time {
 	return time.Now()
 }
 
-func UpdateCachedTime(s *Server) {
-	s.UnixTime = time.Now()
+func UpdateCachedTime() {
+	kiwiS.UnixTime = time.Now()
 }
 
-func UpdateLRUClock(s *Server) {
-	s.LruClock = time.Now()
+func UpdateLRUClock() {
+	kiwiS.LruClock = time.Now()
 }
 
-func ServerCronHandler(s *Server) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	s.wg.Add(1)
-	defer s.wg.Done()
-	UpdateCachedTime(s)
-	UpdateLRUClock(s)
-	s.CronLoopCount++
+func ServerCronHandler() {
+	kiwiS.mutex.Lock()
+	defer kiwiS.mutex.Unlock()
+	kiwiS.wg.Add(1)
+	defer kiwiS.wg.Done()
+	UpdateCachedTime()
+	UpdateLRUClock()
+	kiwiS.CronLoopCount++
 }
 
-func ServerCron(s *Server) {
-	s.wg.Add(1)
-	defer s.wg.Done()
+func ServerCron() {
+	kiwiS.wg.Add(1)
+	defer kiwiS.wg.Done()
 	for {
 		select {
-		case <-s.CloseCh:
-			s.ServerLogDebugF("-->%v\n", "ServerCron ------ SHUTDOWN")
+		case <-kiwiS.CloseCh:
+			kiwiS.ServerLogDebugF("-->%v\n", "ServerCron ------ SHUTDOWN")
 			return
-		case <-time.After(time.Millisecond * time.Duration(1000/s.Hz)):
-			go ServerCronHandler(s)
+		case <-time.After(time.Millisecond * time.Duration(1000/kiwiS.Hz)):
+			go ServerCronHandler()
 		}
 	}
 }
 
-func Call(s *Server, c *Client) {
+func Call(c *Client) {
 	// fmt.Println("Call")
-	c.Cmd.Process(s, c)
-	atomic.AddInt64(&s.StatNumCommands, 1)
+	c.Cmd.Process(c)
+	atomic.AddInt64(&kiwiS.StatNumCommands, 1)
 }
 
-func ProcessCommand(s *Server, c *Client) int {
+func ProcessCommand(c *Client) int {
 	// fmt.Println("ProcessCommand")
 	cmdName := strings.ToLower(c.Argv[0])
 	// fmt.Println([]byte(cmdName))
-	c.Cmd = LookUpCommand(s, cmdName)
+	c.Cmd = LookUpCommand(cmdName)
 	if c.Cmd == nil {
 		// fmt.Println("c.Cmd == nil")
-		AddReplyError(s, c, fmt.Sprintf("unknown command '%s'", cmdName))
+		AddReplyError(c, fmt.Sprintf("unknown command '%kiwiS'", cmdName))
 		return C_OK
 	}
 	if (c.Cmd.Arity > 0 && c.Cmd.Arity != c.Argc) || c.Argc < -c.Cmd.Arity {
-		AddReplyError(s, c, fmt.Sprintf("wrong number of arguments for '%s' command", cmdName))
+		AddReplyError(c, fmt.Sprintf("wrong number of arguments for '%kiwiS' command", cmdName))
 		return C_OK
 	}
-	if s.RequirePassword != nil && c.Authenticated == 0 && &c.Cmd.Process != &AuthCommand {
+	if kiwiS.RequirePassword != nil && c.Authenticated == 0 && &c.Cmd.Process != &AuthCommand {
 		// fmt.Println("Authenticated")
-		AddReplyError(s, c, s.Shared.NoAuthErr)
+		AddReplyError(c, kiwiS.Shared.NoAuthErr)
 		return C_OK
 	}
-	Call(s, c)
+	Call(c)
 	return C_OK
 }
 
-func LookUpCommand(s *Server, name string) *Command {
+func LookUpCommand(name string) *Command {
 	// fmt.Println("LookUpCommand", name)
-	return s.Commands[name]
+	return kiwiS.Commands[name]
 }
 
-func ProcessInlineBuffer(s *Server, c *Client) int {
-	// fmt.Println("ProcessInlineBuffer")
+func InlineBufferHandler(c *Client) int {
+	// fmt.Println("InlineBufferHandler")
 
 	// Search for end of line
 	queryBuf := c.ProcessBuf.Bytes()
 	size := len(queryBuf)
 	newline := IndexOfBytes(queryBuf, 0, size, '\n')
 	if newline == -1 {
-		if size > s.ClientMaxQueryBufLen {
-			AddReplyError(s, c, "Protocol error: too big inline request")
-			//SetProtocolError(s, c, "too big inline request", 0)
+		if size > kiwiS.ClientMaxQueryBufLen {
+			AddReplyError(c, "Protocol error: too big inline request")
+			//SetProtocolError(c, "too big inline request", 0)
 		}
 		return C_ERR
 	}
@@ -197,8 +200,8 @@ func ProcessInlineBuffer(s *Server, c *Client) int {
 	/* Split the input buffer up to the \r\n */
 	argvs := SplitArgs(queryBuf[0:newline])
 	if argvs == nil {
-		AddReplyError(s, c, "Protocol error: unbalanced quotes in request")
-		//SetProtocolError(s, c, "unbalanced quotes in inline request", 0)
+		AddReplyError(c, "Protocol error: unbalanced quotes in request")
+		//SetProtocolError(c, "unbalanced quotes in inline request", 0)
 		return C_ERR
 	}
 
@@ -216,15 +219,15 @@ func ProcessInlineBuffer(s *Server, c *Client) int {
 	return C_OK
 }
 
-func ProcessMultiBulkBuffer(s *Server, c *Client) int {
+func MultiBulkBufferHandler(c *Client) int {
 	if c.Argc != 0 {
 		panic("c.Argc != 0")
 	}
 	if c.MultiBulkLen == 0 {
 		star, err := c.ProcessBuf.ReadByte()
 		if err != nil || star != '*' {
-			AddReplyError(s, c, fmt.Sprintf("Protocol error: expected '*', got '%c'", star))
-			//SetProtocolError(s, c, "expected $ but got something else", 0)
+			AddReplyError(c, fmt.Sprintf("Protocol error: expected '*', got '%c'", star))
+			//SetProtocolError(c, "expected $ but got something else", 0)
 			return C_ERR
 		}
 		bulkNumStr, err := c.ProcessBuf.ReadStringExclude('\r')
@@ -234,8 +237,8 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int {
 
 		bulkNum, err := strconv.Atoi(bulkNumStr)
 		if err != nil || bulkNum > 1024*1024 {
-			AddReplyError(s, c, "Protocol error: invalid multibulk length")
-			//SetProtocolError(s, c, "invalid multibulk length", 0)
+			AddReplyError(c, "Protocol error: invalid multibulk length")
+			//SetProtocolError(c, "invalid multibulk length", 0)
 			return C_ERR
 		}
 		if bulkNum <= 0 {
@@ -252,30 +255,30 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int {
 		// Read bulk length if unknown
 		dollar, err := c.ProcessBuf.ReadByte()
 		if err != nil || dollar != '$' {
-			AddReplyError(s, c, fmt.Sprintf("Protocol error: expected '$', got '%c'", dollar))
+			AddReplyError(c, fmt.Sprintf("Protocol error: expected '$', got '%c'", dollar))
 			return C_ERR
 		}
 		bulkLenStr, err := c.ProcessBuf.ReadStringExclude('\r')
 		if err != nil {
-			AddReplyError(s, c, fmt.Sprintf("Protocol error: invalid bulk length"))
+			AddReplyError(c, fmt.Sprintf("Protocol error: invalid bulk length"))
 			return C_ERR
 		}
 		bulkLen, err := strconv.Atoi(bulkLenStr)
-		if err != nil || bulkLen > s.ProtoMaxBulkLen {
-			AddReplyError(s, c, "Protocol error: invalid bulk length")
+		if err != nil || bulkLen > kiwiS.ProtoMaxBulkLen {
+			AddReplyError(c, "Protocol error: invalid bulk length")
 			return C_ERR
 		}
 		c.ProcessBuf.ReadByte() // pass the \n
 
 		bulk := c.ProcessBuf.Next(bulkLen)
 		if len(bulk) != bulkLen {
-			AddReplyError(s, c, "Protocol error: invalid bulk format")
+			AddReplyError(c, "Protocol error: invalid bulk format")
 			return C_ERR
 		}
 		cr, _ := c.ProcessBuf.ReadByte()
 		lf, _ := c.ProcessBuf.ReadByte()
 		if cr != '\r' || lf != '\n' {
-			AddReplyError(s, c, "Protocol error: invalid bulk format")
+			AddReplyError(c, "Protocol error: invalid bulk format")
 			return C_ERR
 		}
 		c.Argv[len(c.Argv)-c.MultiBulkLen] = string(bulk)
@@ -288,8 +291,8 @@ func ProcessMultiBulkBuffer(s *Server, c *Client) int {
 	return C_ERR
 }
 
-func ProcessInputBuffer(s *Server, c *Client) {
-	// fmt.Println("ProcessInputBuffer")
+func ProcessBufferHandler(c *Client) {
+	// fmt.Println("ProcessBufferHandler")
 	if c.RequestType == 0 {
 		firstByte, _ := c.ProcessBuf.ReadByteNotGoForward()
 		if firstByte == '*' {
@@ -299,10 +302,10 @@ func ProcessInputBuffer(s *Server, c *Client) {
 		}
 	}
 	if c.RequestType == PROTO_REQ_INLINE {
-		if ProcessInlineBuffer(s, c) != C_OK {
+		if InlineBufferHandler(c) != C_OK {
 		}
 	} else if c.RequestType == PROTO_REQ_MULTIBULK {
-		if ProcessMultiBulkBuffer(s, c) != C_OK {
+		if MultiBulkBufferHandler(c) != C_OK {
 
 		}
 	} else {
@@ -310,26 +313,26 @@ func ProcessInputBuffer(s *Server, c *Client) {
 	}
 
 	if c.Argc != 0 {
-		ProcessCommand(s, c)
+		ProcessCommand(c)
 	}
 }
 
 // Write data in output buffers to client.
-func WriteToClient(s *Server, c *Client) {
+func WriteToClient(c *Client) {
 	c.ReplyWriter.WriteByte(0)
-	atomic.AddInt64(&s.StatNetOutputBytes, 1)
+	atomic.AddInt64(&kiwiS.StatNetOutputBytes, 1)
 	if c.ReplyWriter.Flush() == nil {
-		c.SetLastInteraction(s.UnixTime)
+		c.SetLastInteraction(kiwiS.UnixTime)
 	}
 }
 
-func ProcessQuery(s *Server, c *Client) {
-	ProcessInputBuffer(s, c)
-	WriteToClient(s, c)
+func ProcessQuery(c *Client) {
+	ProcessBufferHandler(c)
+	WriteToClient(c)
 	c.Reset()
 }
 
-func ReadQuery(s *Server, c *Client, queryFinish chan int) {
+func ReadQuery(c *Client, queryFinish chan int) {
 	// wait write send the signal
 	c.QueryCount++
 	reader := bufio.NewReaderSize(c.Conn, PROTO_IOBUF_LEN)
@@ -346,18 +349,18 @@ func ReadQuery(s *Server, c *Client, queryFinish chan int) {
 			break
 		}
 	}
-	c.SetLastInteraction(s.UnixTime)
-	atomic.AddInt64(&s.StatNetInputBytes, int64(c.ProcessBuf.Len()))
-	ProcessQuery(s, c)
+	c.SetLastInteraction(kiwiS.UnixTime)
+	atomic.AddInt64(&kiwiS.StatNetInputBytes, int64(c.ProcessBuf.Len()))
+	ProcessQuery(c)
 	close(queryFinish)
 }
 
-func ProcessQueryLoop(s *Server, c *Client) {
-	s.wg.Add(1)
-	defer s.wg.Done()
+func ProcessQueryLoop(c *Client) {
+	kiwiS.wg.Add(1)
+	defer kiwiS.wg.Done()
 	for {
 		queryFinish := make(chan int, 1)
-		go ReadQuery(s, c, queryFinish)
+		go ReadQuery(c, queryFinish)
 		
 		select {
 		case <-c.CloseCh:
@@ -370,85 +373,6 @@ func ProcessQueryLoop(s *Server, c *Client) {
 	}
 }
 
-func CommonServer(s *Server, conn net.Conn, flags int, ip string) {
-	c := CreateClient(s, conn, flags)
-	if c == nil {
-		conn.Close()
-		CloseClient(s, c)
-	}
-	if s.Clients.ListLength() > s.MaxClients {
-		AddReplyError(s, c, "max number of clients reached")
-		WriteToClient(s, c)
-		CloseClient(s, c)
-		atomic.AddInt64(&s.StatRejectedConn, 1)
-	}
-	if s.ProtectedMode && s.BindAddrCount == 0 && s.RequirePassword == nil && flags&CLIENT_UNIX_SOCKET == 0 && ip != "" {
-		err := "-DENIED Redis is running in protected mode."
-		AddReplyError(s, c, err)
-		CloseClient(s, c)
-		atomic.AddInt64(&s.StatRejectedConn, 1)
-	}
-	go ProcessQueryLoop(s, c)
-	go CloseClientListener(s, c)
-}
-
-func UnixServer(s *Server) {
-	// fmt.Println("------>UnixServer")
-	s.wg.Add(1)
-	defer s.wg.Done()
-	listener := AnetListenUnix(s.UnixSocketPath)
-	if listener == nil {
-		return
-	}
-	for {
-		ch := make(chan accepted, 1)
-		go func() {
-			conn, err := listener.Accept()
-			ch <- accepted{conn, err}
-		}()
-		select {
-		case <-s.CloseCh:
-			// s.ServerLogDebugF("-->%v\n", "UnixServer ------ SHUTDOWN")
-			listener.Close()
-			return
-		case acc := <-ch:
-			if acc.err != nil {
-				// s.ServerLogDebugF("-->%v\n", "UnixServer ------ Accept Error")
-				AnetSetErrorFormat("Unix Accept error: %s", acc.err)
-				continue
-			}
-			// s.ServerLogDebugF("-->%v\n", "UnixServer ------ CommonServer")
-			CommonServer(s, acc.conn, CLIENT_UNIX_SOCKET, "")
-		}
-	}
-}
-
-func TcpServer(s *Server, ip string) {
-	// fmt.Println("------>TcpServer")
-	s.wg.Add(1)
-	defer s.wg.Done()
-	listener := AnetListenTcp("tcp", ip, s.Port)
-	defer listener.Close()
-	if listener == nil {
-		return
-	}
-	for {
-		ch := make(chan accepted, 1)
-		go func() {
-			conn, err := listener.Accept()
-			ch <- accepted{conn, err}
-		}()
-		select {
-		case <-s.CloseCh:
-			return
-		case acc := <-ch:
-			if acc.err != nil {
-				continue
-			}
-			CommonServer(s, acc.conn, 0, ip)
-		}
-	}
-}
 
 func ServerExists() (int, error) {
 	// fmt.Println(os.TempDir() + "kiwi.pid")
@@ -478,7 +402,7 @@ func ServerExists() (int, error) {
 //
 //		configPath, _ := filepath.Abs(filepath.Dir(os.Args[0]))
 //		nowTime := time.Now()
-//		s := Server{
+//		kiwiS := Server{
 //			Pid:                  pid,
 //			PidFile:              pidFile,
 //			ConfigFile:           configPath,
@@ -522,15 +446,15 @@ func ServerExists() (int, error) {
 //			mutex:                sync.RWMutex{},
 //			wg:                   sync.WaitGroup{},
 //		}
-//		for i := 0; i < s.DbNum; i++ {
-//			s.Dbs = append(s.Dbs, CreateDb(i))
+//		for i := 0; i < kiwiS.DbNum; i++ {
+//			kiwiS.Dbs = append(kiwiS.DbCreateDb(i))
 //		}
-//		s.Clients = CreateSyncList()
-//		s.BindAddrs = append(s.BindAddrs, "0.0.0.0")
-//		s.BindAddrCount++
-//		// // fmt.Println(&s)
-//		PopulateCommandTable(&s)
-//		return &s
+//		kiwiS.Clients = CreateSyncList()
+//		kiwiS.BindAddrs = append(kiwiS.BindAddr"0.0.0.0")
+//		kiwiS.BindAddrCount++
+//		// // fmt.Println()
+//		PopulateCommandTable()
+//		return &kiwiS
 //	} else {
 //		// fmt.Println(err1)
 //	}
@@ -595,9 +519,9 @@ func CreateServer() *Server {
 	s.Clients = CreateSyncList()
 	s.BindAddrs = append(s.BindAddrs, "0.0.0.0")
 	s.BindAddrCount++
-	// // fmt.Println(&s)
-	CreateShared(&s)
-	PopulateCommandTable(&s)
+	// // fmt.Println()
+	CreateShared()
+	PopulateCommandTable()
 	return &s
 
 	//if pid, err1 := ServerExists(); err1 == nil {
@@ -614,54 +538,54 @@ func CreateServer() *Server {
 	return nil
 }
 
-func StartServer(s *Server) {
+func StartServer() {
 	// fmt.Println("StartServer")
-	if s == nil {
+	if kiwiS == nil {
 		return
 	}
-	for _, addr := range s.BindAddrs {
+	for _, addr := range kiwiS.BindAddrs {
 		if addr != "" {
-			go TcpServer(s, addr)
+			go TcpServer(addr)
 		}
 	}
-	//go UnixServer(s)
-	go ServerCron(s)
-	go CloseServerListener(s)
+	//go UnixServer()
+	go ServerCron()
+	go CloseServerListener()
 }
 
-func HandleSignal(s *Server) {
+func HandleSignal() {
 	// fmt.Println("HandleSignal")
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
-	s.ServerLogDebugF("-->%v: <%v>\n", "Signal", <-c)
-	BroadcastCloseServer(s)
-	s.wg.Wait()
+	kiwiS.ServerLogDebugF("-->%v: <%v>\n", "Signal", <-c)
+	BroadcastCloseServer()
+	kiwiS.wg.Wait()
 	os.Exit(0)
 }
 
-func CloseServerListener(s *Server) {
+func CloseServerListener() {
 	// fmt.Println("CloseServerListener")
-	s.wg.Add(1)
-	defer s.wg.Done()
+	kiwiS.wg.Add(1)
+	defer kiwiS.wg.Done()
 	select {
-	case <-s.CloseCh:
+	case <-kiwiS.CloseCh:
 		// fmt.Println("CloseServerListener ----> Close Server")
-		CloseServer(s)
+		CloseServer()
 	}
 }
 
-func CloseServer(s *Server) {
+func CloseServer() {
 	// fmt.Println("CloseServer")
 	// clear clients
-	iter := s.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
+	iter := kiwiS.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
 	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
 		BroadcastCloseClient(node.Value.(*Client))
 	}
-	defer os.Remove(s.UnixSocketPath)
-	defer os.Remove(s.PidFile)
+	defer os.Remove(kiwiS.UnixSocketPath)
+	defer os.Remove(kiwiS.PidFile)
 }
 
-func BroadcastCloseServer(s *Server) {
+func BroadcastCloseServer() {
 	// fmt.Println("BroadcastCloseServer")
-	close(s.CloseCh)
+	close(kiwiS.CloseCh)
 }

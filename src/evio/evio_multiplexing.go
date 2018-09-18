@@ -16,17 +16,17 @@ import (
 	"time"
 
 	reuseport "github.com/kavu/go_reuseport"
-	"github.com/tidwall/evio/internal"
+	"kiwi/src/evio/internal"
 )
 
 type conn struct {
 	fd         int              // file descriptor
-	lnidx      int              // listener index in the server lns list
+	lnidx      int              // listener index in the mpserver lns list
 	loopidx    int              // owner loop
 	out        []byte           // write buffer
 	sa         syscall.Sockaddr // remote socket address
 	reuse      bool             // should reuse input buffer
-	opened     bool             // connection opened event fired
+	opened     bool             // connection opened evio fired
 	action     Action           // next user action
 	ctx        interface{}      // user-defined context
 	addrIndex  int
@@ -40,7 +40,7 @@ func (c *conn) AddrIndex() int             { return c.addrIndex }
 func (c *conn) LocalAddr() net.Addr        { return c.localAddr }
 func (c *conn) RemoteAddr() net.Addr       { return c.remoteAddr }
 
-type server struct {
+type mpserver struct {
 	events   Events             // user events
 	loops    []*loop            // all the loops
 	lns      []*listener        // all the listeners
@@ -54,7 +54,7 @@ type server struct {
 }
 
 type loop struct {
-	idx     int            // loop index in the server loops list
+	idx     int            // loop index in the mpserver loops list
 	poll    *internal.Poll // epoll or kqueue
 	packet  []byte         // read packet buffer
 	fdconns map[int]*conn  // loop connections fd -> conn
@@ -62,20 +62,20 @@ type loop struct {
 }
 
 // waitForShutdown waits for a signal to shutdown
-func (s *server) waitForShutdown() {
+func (s *mpserver) waitForShutdown() {
 	s.cond.L.Lock()
 	s.cond.Wait()
 	s.cond.L.Unlock()
 }
 
-// signalShutdown signals a shutdown an begins server closing
-func (s *server) signalShutdown() {
+// signalShutdown signals a shutdown an begins mpserver closing
+func (s *mpserver) signalShutdown() {
 	s.cond.L.Lock()
 	s.cond.Signal()
 	s.cond.L.Unlock()
 }
 
-func serve(events Events, listeners []*listener) error {
+func mpserve(events Events, listeners []*listener) error {
 	// figure out the correct number of loops/goroutines to use.
 	numLoops := events.NumLoops
 	if numLoops <= 0 {
@@ -86,22 +86,22 @@ func serve(events Events, listeners []*listener) error {
 		}
 	}
 
-	s := &server{}
+	s := &mpserver{}
 	s.events = events
 	s.lns = listeners
 	s.cond = sync.NewCond(&sync.Mutex{})
 	s.balance = events.LoadBalance
 	s.tch = make(chan time.Duration)
 
-	//println("-- server starting")
+	//println("-- mpserver starting")
 	if s.events.Serving != nil {
-		var svr Server
-		svr.NumLoops = numLoops
-		svr.Addrs = make([]net.Addr, len(listeners))
+		var es EvioServer
+		es.NumLoops = numLoops
+		es.Addrs = make([]net.Addr, len(listeners))
 		for i, ln := range listeners {
-			svr.Addrs[i] = ln.lnaddr
+			es.Addrs[i] = ln.lnaddr
 		}
-		action := s.events.Serving(svr)
+		action := s.events.Serving(es)
 		switch action {
 		case None:
 		case Shutdown:
@@ -128,7 +128,7 @@ func serve(events Events, listeners []*listener) error {
 			}
 			l.poll.Close()
 		}
-		//println("-- server stopped")
+		//println("-- mpserver stopped")
 	}()
 
 	// create loops locally and bind the listeners.
@@ -152,7 +152,7 @@ func serve(events Events, listeners []*listener) error {
 	return nil
 }
 
-func loopCloseConn(s *server, l *loop, c *conn, err error) error {
+func loopCloseConn(s *mpserver, l *loop, c *conn, err error) error {
 	atomic.AddInt32(&l.count, -1)
 	delete(l.fdconns, c.fd)
 	syscall.Close(c.fd)
@@ -166,7 +166,7 @@ func loopCloseConn(s *server, l *loop, c *conn, err error) error {
 	return nil
 }
 
-func loopDetachConn(s *server, l *loop, c *conn, err error) error {
+func loopDetachConn(s *mpserver, l *loop, c *conn, err error) error {
 	if s.events.Detached == nil {
 		return loopCloseConn(s, l, c, err)
 	}
@@ -185,7 +185,7 @@ func loopDetachConn(s *server, l *loop, c *conn, err error) error {
 	return nil
 }
 
-func loopNote(s *server, l *loop, note interface{}) error {
+func loopNote(s *mpserver, l *loop, note interface{}) error {
 	var err error
 	switch v := note.(type) {
 	case time.Duration:
@@ -202,7 +202,7 @@ func loopNote(s *server, l *loop, note interface{}) error {
 	return err
 }
 
-func loopRun(s *server, l *loop) {
+func loopRun(s *mpserver, l *loop) {
 	defer func() {
 		//fmt.Println("-- loop stopped --", l.idx)
 		s.signalShutdown()
@@ -234,7 +234,7 @@ func loopRun(s *server, l *loop) {
 	})
 }
 
-func loopTicker(s *server, l *loop) {
+func loopTicker(s *mpserver, l *loop) {
 	for {
 		if err := l.poll.Trigger(time.Duration(0)); err != nil {
 			break
@@ -243,7 +243,7 @@ func loopTicker(s *server, l *loop) {
 	}
 }
 
-func loopAccept(s *server, l *loop, fd int) error {
+func loopAccept(s *mpserver, l *loop, fd int) error {
 	for i, ln := range s.lns {
 		if ln.fd == fd {
 			if len(s.loops) > 1 {
@@ -287,7 +287,7 @@ func loopAccept(s *server, l *loop, fd int) error {
 	return nil
 }
 
-func loopUDPRead(s *server, l *loop, lnidx, fd int) error {
+func loopUDPRead(s *mpserver, l *loop, lnidx, fd int) error {
 	n, sa, err := syscall.Recvfrom(fd, l.packet, 0)
 	if err != nil || n == 0 {
 		return nil
@@ -328,7 +328,7 @@ func loopUDPRead(s *server, l *loop, lnidx, fd int) error {
 	return nil
 }
 
-func loopOpened(s *server, l *loop, c *conn) error {
+func loopOpened(s *mpserver, l *loop, c *conn) error {
 	c.opened = true
 	c.addrIndex = c.lnidx
 	c.localAddr = s.lns[c.lnidx].lnaddr
@@ -352,7 +352,7 @@ func loopOpened(s *server, l *loop, c *conn) error {
 	return nil
 }
 
-func loopWrite(s *server, l *loop, c *conn) error {
+func loopWrite(s *mpserver, l *loop, c *conn) error {
 	if s.events.PreWrite != nil {
 		s.events.PreWrite()
 	}
@@ -374,7 +374,7 @@ func loopWrite(s *server, l *loop, c *conn) error {
 	return nil
 }
 
-func loopAction(s *server, l *loop, c *conn) error {
+func loopAction(s *mpserver, l *loop, c *conn) error {
 	switch c.action {
 	default:
 		c.action = None
@@ -391,7 +391,7 @@ func loopAction(s *server, l *loop, c *conn) error {
 	return nil
 }
 
-func loopRead(s *server, l *loop, c *conn) error {
+func loopRead(s *mpserver, l *loop, c *conn) error {
 	var in []byte
 	n, err := syscall.Read(c.fd, l.packet)
 	if n == 0 || err != nil {
@@ -465,7 +465,7 @@ func (ln *listener) close() {
 }
 
 // system takes the net listener and detaches it from it's parent
-// event loop, grabs the file descriptor, and makes it non-blocking.
+// evio loop, grabs the file descriptor, and makes it non-blocking.
 func (ln *listener) system() error {
 	var err error
 	switch netln := ln.ln.(type) {

@@ -49,7 +49,7 @@ type Objector interface {
 	//setRefCount(refCount int)
 	//IncrRefCount() int
 	//DecrRefCount() int
-	RefreshLRUClock(s *Server)
+	RefreshLRUClock()
 }
 
 func (o *Object) getOType() byte {
@@ -143,21 +143,20 @@ func (o *Object) setLRU(lru time.Time) {
 //	return o.RefConut
 //}
 
-func (o *Object) RefreshLRUClock(s *Server) {
-	o.Lru = LruClock(s)
+func (o *Object) RefreshLRUClock() {
+	o.Lru = LruClock(kiwiS)
 }
 
 /* functions for Objects */
-func CreateObject(s *Server, otype byte, encoding byte) Object {
+func CreateObject(otype byte, encoding byte) Object {
 	obj := Object{
 		OType:    otype,
 		Encoding: encoding,
-		Lru:      LruClock(s),
+		Lru:      LruClock(kiwiS),
 		//RefConut: 1,
 	}
 	return obj
 }
-
 
 func CheckOType(o Objector, otype byte) bool {
 	return o != nil && o.getOType() == otype

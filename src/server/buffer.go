@@ -289,7 +289,7 @@ func (b *Buffer) ReadRune() (r rune, size int, err error) {
 
 func (b *Buffer) ReadBytes(delim byte) (line []byte, err error) {
 	slice, err := b.readSlice(delim)
-	// return a copy of slice. The buffer's backing array may
+	// return a copy of slice. The buffer'kiwiS backing array may
 	// be overwritten by later calls.
 	line = append(line, slice...)
 	return line, err
@@ -331,7 +331,7 @@ func (b *Buffer) ReadSliceExclude(delim byte) (line []byte, err error) {
 
 func (b *Buffer) ReadBytesExclude(delim byte) (line []byte, err error) {
 	slice, err := b.readSliceExclude(delim)
-	// return a copy of slice. The buffer's backing array may
+	// return a copy of slice. The buffer'kiwiS backing array may
 	// be overwritten by later calls.
 	line = append(line, slice...)
 	return slice, err
@@ -339,7 +339,7 @@ func (b *Buffer) ReadBytesExclude(delim byte) (line []byte, err error) {
 
 func (b *Buffer) ReadStringExclude(delim byte) (line string, err error) {
 	slice, err := b.readSliceExclude(delim)
-	// return a copy of slice. The buffer's backing array may
+	// return a copy of slice. The buffer'kiwiS backing array may
 	// be overwritten by later calls.
 	return string(slice), err
 }
@@ -601,7 +601,7 @@ func (b *LargeBuffer) ReadRune() (r rune, size int, err error) {
 
 func (b *LargeBuffer) ReadBytes(delim byte) (line []byte, err error) {
 	slice, err := b.readSlice(delim)
-	// return a copy of slice. The buffer's backing array may
+	// return a copy of slice. The buffer'kiwiS backing array may
 	// be overwritten by later calls.
 	line = append(line, slice...)
 	return line, err
@@ -643,7 +643,7 @@ func (b *LargeBuffer) ReadSliceExclude(delim byte) (line []byte, err error) {
 
 func (b *LargeBuffer) ReadBytesExclude(delim byte) (line []byte, err error) {
 	slice, err := b.readSliceExclude(delim)
-	// return a copy of slice. The buffer's backing array may
+	// return a copy of slice. The buffer'kiwiS backing array may
 	// be overwritten by later calls.
 	line = append(line, slice...)
 	return slice, err
@@ -651,7 +651,7 @@ func (b *LargeBuffer) ReadBytesExclude(delim byte) (line []byte, err error) {
 
 func (b *LargeBuffer) ReadStringExclude(delim byte) (line string, err error) {
 	slice, err := b.readSliceExclude(delim)
-	// return a copy of slice. The buffer's backing array may
+	// return a copy of slice. The buffer'kiwiS backing array may
 	// be overwritten by later calls.
 	return string(slice), err
 }

@@ -83,7 +83,7 @@ func (s *stdserver) waitForShutdown() error {
 	return err
 }
 
-// signalShutdown signals a shutdown an begins server closing
+// signalShutdown signals a shutdown an begins mpserver closing
 func (s *stdserver) signalShutdown(err error) {
 	s.cond.L.Lock()
 	s.serr = err
@@ -106,15 +106,15 @@ func stdserve(events Events, listeners []*listener) error {
 	s.lns = listeners
 	s.cond = sync.NewCond(&sync.Mutex{})
 
-	//println("-- server starting")
+	//println("-- mpserver starting")
 	if events.Serving != nil {
-		var svr Server
-		svr.NumLoops = numLoops
-		svr.Addrs = make([]net.Addr, len(listeners))
+		var es EvioServer
+		es.NumLoops = numLoops
+		es.Addrs = make([]net.Addr, len(listeners))
 		for i, ln := range listeners {
-			svr.Addrs[i] = ln.lnaddr
+			es.Addrs[i] = ln.lnaddr
 		}
-		action := events.Serving(svr)
+		action := events.Serving(es)
 		switch action {
 		case Shutdown:
 			return nil
