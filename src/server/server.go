@@ -224,7 +224,7 @@ func InitServer() {
 		CronLoopCount:        0,
 		NextClientId:         0,
 		Port:                 9988,
-		BindAddrs:            make([]string, CONFIG_BINDADDR_MAX),
+		BindAddrs:            []string{},
 		BindAddrCount:        0,
 		UnixSocketPath:       unixSocketPath,
 		Clients:              nil,
@@ -249,6 +249,8 @@ func InitServer() {
 		CloseCh:              make(chan struct{}, 1),
 		mutex:                sync.RWMutex{},
 		wg:                   sync.WaitGroup{},
+		reusePort:            false,
+		numLoops:             -1,
 	}
 	for i := 0; i < kiwiS.DbNum; i++ {
 		kiwiS.Dbs[i] = CreateDb(i)
@@ -272,35 +274,29 @@ func InitServer() {
 }
 
 func StartServer() {
-	// fmt.Println("StartServer")
-
 	if kiwiS == nil {
 		return
 	}
-	for _, addr := range kiwiS.BindAddrs {
-		if addr != "" {
-			go EventServe(kiwiS.events, "")
-		}
-	}
-	//go UnixServer()
-	//go ServerCron()
+	addrs := GenerateAddrs()
+	kiwiS.wg.Add(1)
+	go EventServe(kiwiS.events, addrs...)
+}
 
+func WaitServerClose() {
+	fmt.Println("WaitServerClose")
+	kiwiS.wg.Wait()
 }
 
 func GenerateAddrs() (addrs []string) {
 	addrs = []string{}
 	for _, addr := range kiwiS.BindAddrs {
-		append(addrs, fmt.)
+		addrs = append(addrs, fmt.Sprintf("%s://%s:%d?reuseport=%t", "tcp", addr, kiwiS.Port, kiwiS.reusePort))
 	}
+	return addrs
 }
 
 func CloseServer() {
-	// fmt.Println("CloseServer")
-	defer os.Remove(kiwiS.UnixSocketPath)
-	defer os.Remove(kiwiS.PidFile)
-}
-
-func BroadcastCloseServer() {
-	// fmt.Println("BroadcastCloseServer")
-	close(kiwiS.CloseCh)
+	fmt.Println("CloseServer")
+	//defer os.Remove(kiwiS.UnixSocketPath)
+	//defer os.Remove(kiwiS.PidFile)
 }

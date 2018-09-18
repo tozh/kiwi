@@ -11,12 +11,12 @@ func CreateKiwiServerEvents() (events Events) {
 	events = Events{
 		NumLoops: kiwiS.numLoops,
 	}
-	events.Accepted = func(conn Conn, flags int) (c Client, action Action) {
+	events.Accepted = func(conn *conn, flags int) (c Client, action Action) {
 		return CreateClient(conn, flags)
 	}
 
 	events.Opened = func(c Client) (out []byte, opts Options, action Action) {
-		fmt.Println("Opened")
+		// fmt.Println("Opened")
 		if kiwiS.StatConnCount > kiwiS.MaxClients {
 			out = append([]byte{}, "-ERROR exceeds the maximum number of clients.\r\n"...)
 			action = Close
@@ -26,31 +26,32 @@ func CreateKiwiServerEvents() (events Events) {
 	events.Closed = func(c Client, err error) (action Action) {
 		cli := c.(*KiwiClient)
 		CloseClient(cli)
-		fmt.Println("Closed")
+		// fmt.Println("Closed")
 		return
 	}
 	events.Data = func(c Client, in []byte) (out []byte, action Action) {
 		cli := c.(*KiwiClient)
-		fmt.Println("Data---->", string(in))
+		// fmt.Println("Data---->", string(in))
 		if len(in) > 0 {
 			atomic.AddInt64(&kiwiS.StatNetInputBytes, int64(len(in)))
 		}
 		cli.QueryCount++
 		cli.Reset(in)
 		ProcessInput(cli)
+		cli.OutBuf.WriteByte(0)
 		out = cli.OutBuf.Bytes()
-		fmt.Println("Data---->", string(out))
+		// fmt.Println("Data---->", string(out))
 		return
 	}
 	events.Written = func(c Client, n int) (action Action) {
 		cli := c.(*KiwiClient)
-		fmt.Println("Written")
+		// fmt.Println("Written")
 		atomic.AddInt64(&kiwiS.StatNetOutputBytes, int64(n))
 		cli.SetLastInteraction()
 		return
 	}
 	events.Shutdown = func() {
-		fmt.Println("Shutdown Action...Funished")
+		// fmt.Println("Shutdown Action...Funished")
 		return
 	}
 	return

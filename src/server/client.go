@@ -4,12 +4,11 @@ import (
 	"time"
 	"fmt"
 	"sync/atomic"
-	"kiwi/src/evio"
 )
 
 type KiwiClient struct {
 	Id              int64
-	Conn            evio.Conn
+	Conn            *conn
 	Db              *Db
 	Name            string
 	PeerId          string
@@ -28,7 +27,7 @@ type KiwiClient struct {
 	QueryCount      int
 }
 
-func (c *KiwiClient) GetConn() Conn {
+func (c *KiwiClient) GetConn() *conn {
 	return c.Conn
 }
 
@@ -196,7 +195,7 @@ func CatClientInfoString(c *KiwiClient) string {
 		kiwiS.UnixTime.Sub(c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.id, cmd)
 }
 
-func CreateClient(conn evio.Conn, flags int) (c *KiwiClient, action Action) {
+func CreateClient(conn *conn, flags int) (c *KiwiClient, action Action) {
 	createTime := kiwiS.UnixTime
 	c = &KiwiClient{
 		Id:              0,

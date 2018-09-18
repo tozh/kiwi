@@ -144,7 +144,7 @@ func (o *Object) setLRU(lru time.Time) {
 //}
 
 func (o *Object) RefreshLRUClock() {
-	o.Lru = LruClock(kiwiS)
+	o.Lru = LruClock()
 }
 
 /* functions for Objects */
@@ -152,7 +152,7 @@ func CreateObject(otype byte, encoding byte) Object {
 	obj := Object{
 		OType:    otype,
 		Encoding: encoding,
-		Lru:      LruClock(kiwiS),
+		Lru:      LruClock(),
 		//RefConut: 1,
 	}
 	return obj

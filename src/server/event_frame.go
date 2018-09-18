@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"fmt"
 )
 
 // Action is an action that occurs after the completion of an evio.
@@ -71,7 +72,7 @@ type Conn interface {
 }
 
 type Client interface {
-	GetConn() Conn
+	GetConn() *conn
 }
 
 type Events struct {
@@ -90,7 +91,7 @@ type Events struct {
 	Serving func(es EventServer) (action Action)
 
 	// YOU HAVE TO DEFINCE THIS
-	Accepted func(conn Conn, flags int) (c Client, action Action)
+	Accepted func(conn *conn, flags int) (c Client, action Action)
 
 	// Opened fires when a new connection has opened.
 	// The info parameter has information about the connection such as
@@ -139,11 +140,13 @@ type Events struct {
 // The "tcp" network scheme is assumed when one is not specified.
 
 func EventServe(events Events, addr ...string) error {
-	kiwiS.wg.Add(1)
+	fmt.Println("EventServe")
+	defer fmt.Println("EventServe End")
 	defer kiwiS.wg.Done()
 	var lns []*listener
 	defer func() {
 		for _, ln := range lns {
+			fmt.Println("EventServe------->", "ln.close")
 			ln.close()
 		}
 	}()
@@ -173,6 +176,7 @@ func EventServe(events Events, addr ...string) error {
 }
 
 func parseAddr(addr string) (network string, address string, opts addrOpts) {
+	fmt.Println("parseAddr")
 	network = "tcp"
 	address = addr
 	opts.reusePort = false
@@ -200,5 +204,6 @@ func parseAddr(addr string) (network string, address string, opts addrOpts) {
 		}
 		address = address[:q]
 	}
+	fmt.Println(network, address, opts)
 	return
 }

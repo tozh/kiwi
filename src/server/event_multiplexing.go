@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"github.com/kavu/go_reuseport"
+	"fmt"
 )
 
 var errClosing = errors.New("closing")
@@ -157,6 +158,7 @@ func mpServe(events Events, listeners []*listener) error {
 			numLoops = runtime.NumCPU()
 		}
 	}
+	fmt.Println("numLoops---->", numLoops)
 	mpes := &mpEventServer{}
 	mpes.events = events
 	mpes.lns = listeners
@@ -221,7 +223,7 @@ func mpServe(events Events, listeners []*listener) error {
 }
 
 func loopCloseConn(mpes *mpEventServer, l *loop, c Client, err error) error {
-	conn := c.GetConn().(*conn)
+	conn := c.GetConn()
 	atomic.AddInt32(&l.count, -1)
 	delete(l.fdclis, conn.fd)
 	syscall.Close(conn.fd)
@@ -236,7 +238,7 @@ func loopCloseConn(mpes *mpEventServer, l *loop, c Client, err error) error {
 }
 
 func loopDetachConn(mpes *mpEventServer, l *loop, c Client, err error) error {
-	conn := c.GetConn().(*conn)
+	conn := c.GetConn()
 	if mpes.events.Detached == nil {
 		return loopCloseConn(mpes, l, c, err)
 	}
@@ -297,15 +299,14 @@ func loopRun(mpes *mpEventServer, l *loop) {
 			return loopNote(mpes, l, note)
 		}
 		c := l.fdclis[fd]
-		conn := c.GetConn().(*conn)
 		switch {
 		case c == nil:
 			return loopAccept(mpes, l, fd)
-		case !conn.opened:
+		case !c.GetConn().opened:
 			return loopOpened(mpes, l, c)
-		case len(conn.out) > 0:
+		case len(c.GetConn().out) > 0:
 			return loopWrite(mpes, l, c)
-		case conn.action != None:
+		case c.GetConn().action != None:
 			return loopAction(mpes, l, c)
 		default:
 			return loopRead(mpes, l, c)
@@ -314,6 +315,7 @@ func loopRun(mpes *mpEventServer, l *loop) {
 }
 
 func loopAccept(mpes *mpEventServer, l *loop, fd int) error {
+	//fmt.Println("loopAccept")
 	for i, ln := range mpes.lns {
 		if ln.fd == fd {
 			if len(mpes.loops) > 1 {
@@ -352,7 +354,7 @@ func loopAccept(mpes *mpEventServer, l *loop, fd int) error {
 			l.poll.AddReadWrite(conn.fd)
 			c, action := mpes.events.Accepted(conn, flag)
 			if c == nil || action != None {
-				return
+				return err
 				conn.action = action
 			}
 			l.fdclis[conn.fd] = c
@@ -364,7 +366,7 @@ func loopAccept(mpes *mpEventServer, l *loop, fd int) error {
 }
 
 func loopOpened(mpes *mpEventServer, l *loop, c Client) error {
-	conn := c.GetConn().(*conn)
+	conn := c.GetConn()
 	conn.opened = true
 	conn.addrIndex = conn.lnidx
 	conn.remoteAddr = internal.SockaddrToAddr(conn.sa)
@@ -388,7 +390,7 @@ func loopOpened(mpes *mpEventServer, l *loop, c Client) error {
 }
 
 func loopAction(mpes *mpEventServer, l *loop, c Client) error {
-	conn := c.GetConn().(*conn)
+	conn := c.GetConn()
 	switch conn.action {
 	default:
 		conn.action = None
@@ -406,7 +408,7 @@ func loopAction(mpes *mpEventServer, l *loop, c Client) error {
 }
 
 func loopRead(mpes *mpEventServer, l *loop, c Client) error {
-	conn := c.GetConn().(*conn)
+	conn := c.GetConn()
 	var in []byte
 	n, err := syscall.Read(conn.fd, l.buf)
 	if n == 0 || err != nil {
@@ -433,7 +435,7 @@ func loopRead(mpes *mpEventServer, l *loop, c Client) error {
 }
 
 func loopWrite(mpes *mpEventServer, l *loop, c Client) error {
-	conn := c.GetConn().(*conn)
+	conn := c.GetConn()
 	if mpes.events.PreWrite != nil {
 		mpes.events.PreWrite()
 	}
