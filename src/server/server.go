@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"net"
-	"io"
-	"bufio"
 )
 
 type accepted struct {
@@ -66,40 +64,14 @@ type Server struct {
 	CloseCh              chan struct{}
 	mutex                sync.RWMutex
 	wg                   sync.WaitGroup
+	events               *Events
+	reusePort	bool
+	numLoops int
 }
-
 
 var kiwiS *Server
 
-//func SetProtocolError(c *Client, err string, pos int) {
-//	kiwiS.ServerLogErrorF("%kiwiS\n", err)
-//	if kiwiS.LogLevel <= LL_INFO {
-//		errorStr := fmt.Sprintf("Query buffer during protocol error: '%kiwiS'", c.ReadBuf)
-//		buf := make([]byte, len(errorStr))
-//		for i := 0; i < len(errorStr); i++ {
-//			if strconv.IsPrint(rune(errorStr[i])) {
-//				buf[i] = errorStr[i]
-//			} else {
-//				buf[i] = '.'
-//			}
-//		}
-//		c.ReadBuf = c.ReadBuf[pos:]
-//	}
-//}
 
-func GetAllClientInfoString(ctype int) string {
-	str := Buffer{}
-	iter := kiwiS.Clients.ListGetIterator(ITERATION_DIRECTION_INORDER)
-	for node := iter.ListNext(); node != nil; node = iter.ListNext() {
-		c := node.Value.(*Client)
-		if ctype != -1 && c.GetClientType() != ctype {
-			continue
-		}
-		str.WriteString(CatClientInfoString(c))
-		str.WriteByte('\n')
-	}
-	return str.String()
-}
 
 func LruClock() time.Time {
 	if 1000/kiwiS.Hz <= LRU_CLOCK_RESOLUTION {
@@ -175,15 +147,14 @@ func ProcessCommand(c *Client) int {
 }
 
 func LookUpCommand(name string) *Command {
-	// fmt.Println("LookUpCommand", name)
 	return kiwiS.Commands[name]
 }
 
-func InlineBufferHandler(c *Client) int {
-	// fmt.Println("InlineBufferHandler")
+func ProcessInline(c *Client) int {
+	// fmt.Println("ProcessInline")
 
 	// Search for end of line
-	queryBuf := c.ProcessBuf.Bytes()
+	queryBuf := c.InBuf.Bytes()
 	size := len(queryBuf)
 	newline := IndexOfBytes(queryBuf, 0, size, '\n')
 	if newline == -1 {
@@ -219,18 +190,18 @@ func InlineBufferHandler(c *Client) int {
 	return C_OK
 }
 
-func MultiBulkBufferHandler(c *Client) int {
+func ProcessMultiBulk(c *Client) int {
 	if c.Argc != 0 {
 		panic("c.Argc != 0")
 	}
 	if c.MultiBulkLen == 0 {
-		star, err := c.ProcessBuf.ReadByte()
+		star, err := c.InBuf.ReadByte()
 		if err != nil || star != '*' {
 			AddReplyError(c, fmt.Sprintf("Protocol error: expected '*', got '%c'", star))
 			//SetProtocolError(c, "expected $ but got something else", 0)
 			return C_ERR
 		}
-		bulkNumStr, err := c.ProcessBuf.ReadStringExclude('\r')
+		bulkNumStr, err := c.InBuf.ReadStringExclude('\r')
 		if err != nil {
 			return C_ERR
 		}
@@ -244,7 +215,7 @@ func MultiBulkBufferHandler(c *Client) int {
 		if bulkNum <= 0 {
 			return C_OK
 		}
-		c.ProcessBuf.ReadByte() // pass the \n
+		c.InBuf.ReadByte() // pass the \n
 		c.MultiBulkLen = bulkNum
 		c.Argv = make([]string, c.MultiBulkLen)
 	}
@@ -253,12 +224,12 @@ func MultiBulkBufferHandler(c *Client) int {
 	}
 	for c.MultiBulkLen > 0 {
 		// Read bulk length if unknown
-		dollar, err := c.ProcessBuf.ReadByte()
+		dollar, err := c.InBuf.ReadByte()
 		if err != nil || dollar != '$' {
 			AddReplyError(c, fmt.Sprintf("Protocol error: expected '$', got '%c'", dollar))
 			return C_ERR
 		}
-		bulkLenStr, err := c.ProcessBuf.ReadStringExclude('\r')
+		bulkLenStr, err := c.InBuf.ReadStringExclude('\r')
 		if err != nil {
 			AddReplyError(c, fmt.Sprintf("Protocol error: invalid bulk length"))
 			return C_ERR
@@ -268,15 +239,15 @@ func MultiBulkBufferHandler(c *Client) int {
 			AddReplyError(c, "Protocol error: invalid bulk length")
 			return C_ERR
 		}
-		c.ProcessBuf.ReadByte() // pass the \n
+		c.InBuf.ReadByte() // pass the \n
 
-		bulk := c.ProcessBuf.Next(bulkLen)
+		bulk := c.InBuf.Next(bulkLen)
 		if len(bulk) != bulkLen {
 			AddReplyError(c, "Protocol error: invalid bulk format")
 			return C_ERR
 		}
-		cr, _ := c.ProcessBuf.ReadByte()
-		lf, _ := c.ProcessBuf.ReadByte()
+		cr, _ := c.InBuf.ReadByte()
+		lf, _ := c.InBuf.ReadByte()
 		if cr != '\r' || lf != '\n' {
 			AddReplyError(c, "Protocol error: invalid bulk format")
 			return C_ERR
@@ -291,10 +262,9 @@ func MultiBulkBufferHandler(c *Client) int {
 	return C_ERR
 }
 
-func ProcessBufferHandler(c *Client) {
-	// fmt.Println("ProcessBufferHandler")
+func ProcessInput(c *Client) {
 	if c.RequestType == 0 {
-		firstByte, _ := c.ProcessBuf.ReadByteNotGoForward()
+		firstByte, _ := c.InBuf.ReadByteNotGoForward()
 		if firstByte == '*' {
 			c.RequestType = PROTO_REQ_MULTIBULK
 		} else {
@@ -302,10 +272,10 @@ func ProcessBufferHandler(c *Client) {
 		}
 	}
 	if c.RequestType == PROTO_REQ_INLINE {
-		if InlineBufferHandler(c) != C_OK {
+		if ProcessInline(c) != C_OK {
 		}
 	} else if c.RequestType == PROTO_REQ_MULTIBULK {
-		if MultiBulkBufferHandler(c) != C_OK {
+		if ProcessMultiBulk(c) != C_OK {
 
 		}
 	} else {
@@ -318,61 +288,60 @@ func ProcessBufferHandler(c *Client) {
 }
 
 // Write data in output buffers to client.
-func WriteToClient(c *Client) {
-	c.ReplyWriter.WriteByte(0)
-	atomic.AddInt64(&kiwiS.StatNetOutputBytes, 1)
-	if c.ReplyWriter.Flush() == nil {
-		c.SetLastInteraction(kiwiS.UnixTime)
-	}
-}
+//func WriteToClient(c *Client) {
+//	c.ReplyWriter.WriteByte(0)
+//	atomic.AddInt64(&kiwiS.StatNetOutputBytes, 1)
+//	if c.ReplyWriter.Flush() == nil {
+//		c.SetLastInteraction(kiwiS.UnixTime)
+//	}
+//}
+//
+//func ProcessInput(c *Client) {
+//	ProcessInput(c)
+//	WriteToClient(c)
+//	c.Reset()
+//}
 
-func ProcessQuery(c *Client) {
-	ProcessBufferHandler(c)
-	WriteToClient(c)
-	c.Reset()
-}
+//func ReadQuery(c *Client, queryFinish chan int) {
+//	// wait write send the signal
+//	c.QueryCount++
+//	reader := bufio.NewReaderSize(c.Conn, PROTO_IOBUF_LEN)
+//	for {
+//		recieved, err := reader.ReadBytes(0)
+//		if err == io.EOF { // client side closed connection
+//			BroadcastCloseClient(c)
+//			return
+//		}
+//		if len(recieved) > 0 {
+//			c.InBuf.Write(recieved)
+//		}
+//		if err == nil {
+//			break
+//		}
+//	}
+//	c.SetLastInteraction(kiwiS.UnixTime)
+//	atomic.AddInt64(&kiwiS.StatNetInputBytes, int64(c.InBuf.Len()))
+//	ProcessInput(c)
+//	close(queryFinish)
+//}
 
-func ReadQuery(c *Client, queryFinish chan int) {
-	// wait write send the signal
-	c.QueryCount++
-	reader := bufio.NewReaderSize(c.Conn, PROTO_IOBUF_LEN)
-	for {
-		recieved, err := reader.ReadBytes(0)
-		if err == io.EOF { // client side closed connection
-			BroadcastCloseClient(c)
-			return
-		}
-		if len(recieved) > 0 {
-			c.ProcessBuf.Write(recieved)
-		}
-		if err == nil {
-			break
-		}
-	}
-	c.SetLastInteraction(kiwiS.UnixTime)
-	atomic.AddInt64(&kiwiS.StatNetInputBytes, int64(c.ProcessBuf.Len()))
-	ProcessQuery(c)
-	close(queryFinish)
-}
-
-func ProcessQueryLoop(c *Client) {
-	kiwiS.wg.Add(1)
-	defer kiwiS.wg.Done()
-	for {
-		queryFinish := make(chan int, 1)
-		go ReadQuery(c, queryFinish)
-		
-		select {
-		case <-c.CloseCh:
-			// server closed, broadcast
-			close(queryFinish)
-			return
-		case <-queryFinish:
-			// query processing finished
-		}
-	}
-}
-
+//func ProcessQueryLoop(c *Client) {
+//	kiwiS.wg.Add(1)
+//	defer kiwiS.wg.Done()
+//	for {
+//		queryFinish := make(chan int, 1)
+//		go ReadQuery(c, queryFinish)
+//
+//		select {
+//		case <-c.CloseCh:
+//			// server closed, broadcast
+//			close(queryFinish)
+//			return
+//		case <-queryFinish:
+//			// query processing finished
+//		}
+//	}
+//}
 
 func ServerExists() (int, error) {
 	// fmt.Println(os.TempDir() + "kiwi.pid")
@@ -583,9 +552,4 @@ func CloseServer() {
 	}
 	defer os.Remove(kiwiS.UnixSocketPath)
 	defer os.Remove(kiwiS.PidFile)
-}
-
-func BroadcastCloseServer() {
-	// fmt.Println("BroadcastCloseServer")
-	close(kiwiS.CloseCh)
 }

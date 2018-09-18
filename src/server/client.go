@@ -3,11 +3,8 @@ package server
 import (
 	"time"
 	"fmt"
-	"sync"
-	"bufio"
 	"sync/atomic"
 	"kiwi/src/evio"
-	"net"
 )
 
 type Client struct {
@@ -15,38 +12,28 @@ type Client struct {
 	Conn            evio.Conn
 	Db              *Db
 	Name            string
-	ReadBuf         []byte
-	ProcessBuf      *LargeBuffer
+	PeerId          string
+	InBuf           *LargeBuffer
+	OutBuf          *LargeBuffer
 	Argc            int      // count of arguments
 	Argv            []string // arguments of current command
 	Cmd             *Command
-	ReplyWriter     *bufio.Writer
 	CreateTime      time.Time
 	LastInteraction time.Time
 	Flags           int
 	Node            *ListNode
-	PeerId          string
 	RequestType     int // Request protocol type: PROTO_REQ_*
 	MultiBulkLen    int // Number of multi bulk arguments left to read.
 	Authenticated   int
 	QueryCount      int
-	MaxIdleTime     time.Duration
-	mutex           *sync.Mutex
 }
-
-func (c *Client) Context() interface{}       { return c.Conn.Context() }
-func (c *Client) SetContext(ctx interface{}) { c.Conn.SetContext(ctx) }
-func (c *Client) AddrIndex() int             { return c.Conn.AddrIndex() }
-func (c *Client) LocalAddr() net.Addr        { return c.Conn.LocalAddr() }
-func (c *Client) RemoteAddr() net.Addr       { return c.Conn.RemoteAddr() }
-
 
 func (c *Client) GetLastInteraction() time.Time {
 	return c.LastInteraction
 }
 
-func (c *Client) SetLastInteraction(time time.Time) {
-	c.LastInteraction = time
+func (c *Client) SetLastInteraction() {
+	c.LastInteraction = LruClock()
 }
 
 func (c *Client) WithFlags(flags int) bool {
@@ -63,7 +50,7 @@ func (c *Client) DeleteFlags(flags int) {
 
 func (c *Client) GeneratePeerId(s *Server) {
 	if c.WithFlags(CLIENT_UNIX_SOCKET) {
-		c.PeerId = fmt.Sprintf("%kiwiS:0", s.UnixSocketPath)
+		c.PeerId = fmt.Sprintf("%s:0", s.UnixSocketPath)
 	} else {
 		c.PeerId = c.Conn.RemoteAddr().String()
 	}
@@ -76,9 +63,9 @@ func (c *Client) GetPeerId(s *Server) string {
 	return c.PeerId
 }
 
-func (c *Client) GetNextClientId(s *Server) {
-	c.Id = atomic.LoadInt64(&s.NextClientId)
-	atomic.AddInt64(&s.NextClientId, 1)
+func (c *Client) GetNextClientId() {
+	c.Id = atomic.LoadInt64(&kiwiS.NextClientId)
+	atomic.AddInt64(&kiwiS.NextClientId, 1)
 }
 
 func (c *Client) GetClientType() int {
@@ -130,12 +117,16 @@ func (c *Client) ResetArgv() {
 	c.Argv = nil
 }
 
-func (c *Client) Reset() {
+func (c *Client) Reset(in []byte) {
+	if len(in) > 0 {
+		c.InBuf = NewLargeBuffer(in)
+	} else {
+		c.InBuf.Reset()
+	}
 	c.ResetArgv()
 	c.RequestType = 0
 	c.MultiBulkLen = 0
-	c.ReplyWriter.Reset(c.Conn)
-	c.ProcessBuf.Reset()
+	c.OutBuf.Reset()
 }
 
 func (c *Client) PrepareClientToWrite() int {
@@ -213,7 +204,9 @@ func CreateClient(conn evio.Conn, flags int) *Client {
 		Id:              0,
 		Conn:            conn,
 		Name:            "",
-		ProcessBuf:      &LargeBuffer{},
+		PeerId:          "",
+		InBuf:           &LargeBuffer{},
+		OutBuf:          &LargeBuffer{},
 		Cmd:             nil,
 		CreateTime:      createTime,
 		LastInteraction: createTime,
@@ -223,46 +216,11 @@ func CreateClient(conn evio.Conn, flags int) *Client {
 		MultiBulkLen:    0,
 		Authenticated:   0,
 		QueryCount:      0,
-		MaxIdleTime:     0,
-		mutex:           &sync.Mutex{},
 	}
-	if !c.WithFlags(CLIENT_LUA) {
-		c.MaxIdleTime = kiwiS.ClientMaxIdleTime
-	}
-	c.GetNextClientId(kiwiS)
+	c.GetNextClientId()
 	SelectDB(&c, 0)
 	LinkClient(&c)
 	return &c
-}
-
-func BroadcastCloseClient(c *Client) {
-	close(c.CloseCh)
-}
-
-func CloseClientListener(c *Client) {
-	kiwiS.wg.Add(1)
-	defer kiwiS.wg.Done()
-	select {
-	case <-c.CloseCh:
-		CloseClient(c)
-	}
-}
-
-func HeartBeating(c *Client, readCh chan int) {
-	// fmt.Println("HeartBeatLoop")
-	kiwiS.wg.Add(1)
-	defer kiwiS.wg.Done()
-	select {
-	case <-c.CloseCh:
-		return
-	case <-readCh:
-		return
-	case <-time.After(c.MaxIdleTime):
-		fmt.Println("HearBeat fail. 3s reached.")
-		close(readCh)
-		BroadcastCloseClient(c)
-		return
-	}
 }
 
 func LinkClient(c *Client) {
@@ -273,24 +231,17 @@ func LinkClient(c *Client) {
 }
 
 func UnLinkClient(c *Client) {
-
-	if c.Conn != nil {
-		kiwiS.Clients.ListDelNode(c.Node)
-		c.Node = nil
-		delete(kiwiS.ClientsMap, c.Id)
-		atomic.AddInt64(&kiwiS.StatConnCount, -1)
-		c.Conn.Close()
-		c.Conn = nil
-	}
+	kiwiS.Clients.ListDelNode(c.Node)
+	c.Node = nil
+	delete(kiwiS.ClientsMap, c.Id)
+	atomic.AddInt64(&kiwiS.StatConnCount, -1)
 }
 
 func CloseClient(c *Client) {
-	// fmt.Println("CloseClient")
-	c.ReadBuf = nil
-	c.ReplyWriter = nil
 	c.ResetArgv()
-	c.ProcessBuf = nil
-	c.ReplyWriter = nil
+	c.InBuf = nil
+	c.OutBuf = nil
+	c.Conn = nil
 	UnLinkClient(c)
 }
 

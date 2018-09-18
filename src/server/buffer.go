@@ -11,7 +11,7 @@ import (
 const maxInt = int(^uint(0) >> 1)
 
 const bootLen = 256
-const largeBufferBootLen = 4096  // 4k
+const largeBufferBootLen = 4096 // 4k
 
 const minRead = 1024                 // 1k
 const largeMinRead = PROTO_IOBUF_LEN // 16k
@@ -40,7 +40,6 @@ func makeSlice(n int) []byte {
 	return make([]byte, n)
 }
 
-
 func NewBuffer(buf []byte) *Buffer { return &Buffer{buf: buf} }
 
 func NewBufferString(s string) *Buffer {
@@ -53,10 +52,7 @@ func NewLargeBufferString(s string) *LargeBuffer {
 	return &LargeBuffer{buf: []byte(s)}
 }
 
-
 /* ============== function end  ============== */
-
-
 
 /* -------------- small buffer begin --------------- */
 type Buffer struct {
@@ -313,7 +309,6 @@ func (b *Buffer) ReadString(delim byte) (line string, err error) {
 	return string(slice), err
 }
 
-
 func (b *Buffer) ReadByteNotGoForward() (byte, error) {
 	if b.empty() {
 		// Buffer is empty, reset to recover space.
@@ -364,17 +359,15 @@ func (b *Buffer) SearchByte(delim byte) (index int) {
 	}
 	return b.off + i + 1
 }
+
 /* ============== small buffer end ============== */
-
-
 
 /* -------------- large buffer start--------------- */
 
 type LargeBuffer struct {
-	buf       []byte                   // contents are the bytes buf[off : len(buf)]
-	off       int                      // read at &buf[off], write at &buf[len(buf)]
+	buf       []byte                    // contents are the bytes buf[off : len(buf)]
+	off       int                       // read at &buf[off], write at &buf[len(buf)]
 	bootstrap [largeBufferBootLen] byte // memory to hold first slice; helps small buffers avoid allocation.
-
 }
 
 func (b *LargeBuffer) Bytes() []byte { return b.buf[b.off:] }
@@ -624,7 +617,6 @@ func (b *LargeBuffer) ReadString(delim byte) (line string, err error) {
 	slice, err := b.readSlice(delim)
 	return string(slice), err
 }
-
 
 func (b *LargeBuffer) ReadByteNotGoForward() (byte, error) {
 	if b.empty() {

@@ -195,6 +195,8 @@ func mpServe(events Events, listeners []*listener) error {
 			}
 			l.poll.Close()
 		}
+		// do Shutdown action
+		events.Shutdown()
 	}()
 
 	// create loops locally and bind the listeners.
@@ -441,9 +443,11 @@ func loopWrite(mpes *mpEventServer, l *loop, c *Client) error {
 	} else {
 		conn.out = conn.out[n:]
 	}
+	if mpes.events.Written != nil {
+		conn.action = mpes.events.Written(c, n)
+	}
 	if len(conn.out) == 0 && conn.action == None {
 		l.poll.ModRead(conn.fd)
 	}
 	return nil
 }
-
