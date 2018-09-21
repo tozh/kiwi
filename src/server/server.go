@@ -10,6 +10,9 @@ import (
 	"errors"
 	"path/filepath"
 	"net"
+	"os/signal"
+	"syscall"
+	"sync/atomic"
 )
 
 type accepted struct {
@@ -30,7 +33,7 @@ type Server struct {
 	OrigCommands         map[string]*Command
 	UnixTime             time.Time // UnixTime in nanosecond
 	LruClock             time.Time // Clock for LRU eviction
-	CronLoopCount        int
+	CronLoopCount        int64
 	NextClientId         int64
 	Port                 int // TCP listening port
 	BindAddrs            []string
@@ -47,22 +50,23 @@ type Server struct {
 	ProtoMaxBulkLen      int
 	ClientMaxIdleTime    time.Duration
 	Dirty                int64 // Changes to DB from the last save
-	Shared               *Shared
-	StatRejectedConn     int64
-	StatConnCount        int64
-	StatNetOutputBytes   int64
-	StatNetInputBytes    int64
-	StatNumCommands      int64
-	ConfigFlushAll       bool
-	MaxMemory            int
-	Loading              bool
-	LogLevel             int
-	CloseCh              chan struct{}
-	mutex                sync.RWMutex
-	wg                   sync.WaitGroup
-	events               Events
-	reusePort            bool
-	numLoops             int
+	Shared             *Shared
+	StatRejectedConn   int64
+	StatConnCount      int64
+	StatNetOutputBytes int64
+	StatNetInputBytes  int64
+	StatNumCommands    int64
+	ConfigFlushAll     bool
+	MaxMemory          int
+	Loading            bool
+	LogLevel           int
+	CloseCh            chan struct{}
+	mutex              sync.RWMutex
+	wg                 sync.WaitGroup
+	events             Events
+	reusePort          bool
+	numLoops           int
+	eventServer        *mpEventServer
 }
 
 var kiwiS *Server
@@ -88,13 +92,13 @@ func UpdateLRUClock() {
 }
 
 func ServerCronHandler() {
-	kiwiS.mutex.Lock()
-	defer kiwiS.mutex.Unlock()
+	//kiwiS.mutex.Lock()
+	//defer kiwiS.mutex.Unlock()
 	kiwiS.wg.Add(1)
 	defer kiwiS.wg.Done()
 	UpdateCachedTime()
 	UpdateLRUClock()
-	kiwiS.CronLoopCount++
+	atomic.AddInt64(&kiwiS.CronLoopCount, 1)
 }
 
 func ServerCron() {
@@ -236,21 +240,22 @@ func InitServer() {
 		TcpKeepAlive:         true,
 		ProtoMaxBulkLen:      CONFIG_DEFAULT_PROTO_MAX_BULK_LEN,
 		ClientMaxIdleTime:    5 * time.Second,
-		Dirty:                0,
-		StatRejectedConn:     0,
-		StatConnCount:        0,
-		StatNetOutputBytes:   0,
-		StatNetInputBytes:    0,
-		StatNumCommands:      0,
-		ConfigFlushAll:       false,
-		MaxMemory:            CONFIG_DEFAULT_MAXMEMORY,
-		Loading:              false,
-		LogLevel:             LL_DEBUG,
-		CloseCh:              make(chan struct{}, 1),
-		mutex:                sync.RWMutex{},
-		wg:                   sync.WaitGroup{},
-		reusePort:            false,
-		numLoops:             -1,
+		Dirty:              0,
+		StatRejectedConn:   0,
+		StatConnCount:      0,
+		StatNetOutputBytes: 0,
+		StatNetInputBytes:  0,
+		StatNumCommands:    0,
+		ConfigFlushAll:     false,
+		MaxMemory:          CONFIG_DEFAULT_MAXMEMORY,
+		Loading:            false,
+		LogLevel:           LL_DEBUG,
+		CloseCh:            make(chan struct{}, 1),
+		mutex:              sync.RWMutex{},
+		wg:                 sync.WaitGroup{},
+		reusePort:          false,
+		numLoops:           -1,
+		eventServer:        nil,
 	}
 	for i := 0; i < kiwiS.DbNum; i++ {
 		kiwiS.Dbs[i] = CreateDb(i)
@@ -277,22 +282,31 @@ func StartServer() {
 	if kiwiS == nil {
 		return
 	}
-	addrs := GenerateAddrs()
+	addrs := generateAddrs()
 	kiwiS.wg.Add(1)
 	go EventServe(kiwiS.events, addrs...)
+	go SignalHandle()
 }
 
-func WaitServerClose() {
-	fmt.Println("WaitServerClose")
-	kiwiS.wg.Wait()
-}
 
-func GenerateAddrs() (addrs []string) {
+func generateAddrs() (addrs []string) {
 	addrs = []string{}
 	for _, addr := range kiwiS.BindAddrs {
 		addrs = append(addrs, fmt.Sprintf("%s://%s:%d?reuseport=%t", "tcp", addr, kiwiS.Port, kiwiS.reusePort))
 	}
 	return addrs
+}
+
+func SignalHandle() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+	<-c
+	fmt.Println("signalShutdown")
+	kiwiS.eventServer.signalShutdown()
+}
+
+func WaitEventServerClosed() {
+	kiwiS.wg.Wait()
 }
 
 func CloseServer() {

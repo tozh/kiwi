@@ -141,12 +141,11 @@ type Events struct {
 
 func EventServe(events Events, addr ...string) error {
 	fmt.Println("EventServe")
-	defer fmt.Println("EventServe End")
 	defer kiwiS.wg.Done()
 	var lns []*listener
 	defer func() {
 		for _, ln := range lns {
-			fmt.Println("EventServe------->", "ln.close")
+			fmt.Println("Closing Listeners at", ln.addr, "... Finished.")
 			ln.close()
 		}
 	}()
@@ -172,7 +171,10 @@ func EventServe(events Events, addr ...string) error {
 		}
 		lns = append(lns, &ln)
 	}
-	return mpServe(events, lns)
+
+	mpes := createMpServer(events, lns)
+	kiwiS.eventServer = mpes
+	return mpServe(kiwiS.eventServer)
 }
 
 func parseAddr(addr string) (network string, address string, opts addrOpts) {

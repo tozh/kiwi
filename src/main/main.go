@@ -9,7 +9,7 @@ import (
 func main() {
 	InitServer()
 	StartServer()
-	WaitServerClose()
+	WaitEventServerClosed()
 	CloseServer()
 }
 

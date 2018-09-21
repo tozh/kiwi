@@ -43,6 +43,8 @@ var CommandTable = []Command{
 	//{"randomkey", RandomKeyCommand, 1, "rR", 0, nil, false, false, 0, 0, 0},
 	{"select", SelectCommand, 2, "lF", 0, nil, false, false, 0, 0, 0},
 	{"flushall", FlushAllCommand, -1, "w", 0, nil, false, false, 0, 0, 0},
+	{"flushall", FlushAllCommand, -1, "w", 0, nil, false, false, 0, 0, 0},
+
 }
 
 func PopulateCommandTable() {
@@ -135,6 +137,10 @@ var SetCommand CommandProcess = func(c *KiwiClient) {
 			flags |= OBJ_SET_NX
 		} else if a == "XX" && (flags&OBJ_SET_NX) != 0 {
 			flags |= OBJ_SET_XX
+		} else if a == "EX" && flags&OBJ_SET_PX != 0 {
+			flags |= OBJ_SET_EX
+		} else if a == "PX" && flags&OBJ_SET_EX != 0 {
+			flags |= OBJ_SET_PX
 		} else {
 			AddReply(c, kiwiS.Shared.SyntaxErr)
 			return
@@ -390,4 +396,10 @@ var SelectCommand CommandProcess = func(c *KiwiClient) {
 //	} else {
 //		AddReplyBulkStr( c, key)
 //	}
+//}
+
+//var ExpireCommand CommandProcess = func(c *KiwiClient) {
+//	key, timeStr := c.Argv[0], c.Argv[1]
+//	timeMs := strconv.
+//
 //}

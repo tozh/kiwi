@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"strings"
 	"strconv"
+	"time"
 )
 
 func CreateKiwiServerEvents() (events Events) {
@@ -51,8 +52,12 @@ func CreateKiwiServerEvents() (events Events) {
 		return
 	}
 	events.Shutdown = func() {
-		// fmt.Println("Shutdown Action...Funished")
+		fmt.Println("Shutdown Action...Funished")
 		return
+	}
+	events.Tick = func() (delay time.Duration, action Action) {
+		atomic.AddInt64(&kiwiS.CronLoopCount, 1)
+		return time.Millisecond * time.Duration(1000/kiwiS.Hz), None
 	}
 	return
 }

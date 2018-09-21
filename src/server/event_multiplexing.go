@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 	"kiwi/src/server/event_internal"
-	"runtime"
 	"sync/atomic"
 	"errors"
 	"os"
 	"github.com/kavu/go_reuseport"
+	"runtime"
 	"fmt"
 )
 
@@ -136,39 +136,42 @@ type mpEventServer struct {
 }
 
 // waitForShutdown waits for a signal to shutdown
-func (s *mpEventServer) waitForShutdown() {
-	s.cond.L.Lock()
-	s.cond.Wait()
-	s.cond.L.Unlock()
+func (mpes *mpEventServer) waitForShutdown() {
+	mpes.cond.L.Lock()
+	mpes.cond.Wait()
+	mpes.cond.L.Unlock()
 }
 
 // signalShutdown signals a shutdown an begins mpEventServer closing
-func (s *mpEventServer) signalShutdown() {
-	s.cond.L.Lock()
-	s.cond.Signal()
-	s.cond.L.Unlock()
+func (mpes *mpEventServer) signalShutdown() {
+	mpes.cond.L.Lock()
+	mpes.cond.Signal()
+	mpes.cond.L.Unlock()
 }
 
-func mpServe(events Events, listeners []*listener) error {
-	numLoops := events.NumLoops
-	if numLoops <= 0 {
-		if numLoops == 0 {
-			numLoops = 1
+func createMpServer(events Events, listeners []*listener) *mpEventServer {
+	if events.NumLoops <= 0 {
+		if events.NumLoops == 0 {
+			events.NumLoops = 1
 		} else {
-			numLoops = runtime.NumCPU()
+			events.NumLoops = runtime.NumCPU()
 		}
 	}
-	fmt.Println("numLoops---->", numLoops)
 	mpes := &mpEventServer{}
 	mpes.events = events
 	mpes.lns = listeners
 	mpes.cond = sync.NewCond(&sync.Mutex{})
 	mpes.balance = events.LoadBalance
 	mpes.tch = make(chan time.Duration)
+	return mpes
+}
+
+func mpServe(mpes *mpEventServer) error {
+	fmt.Println("numLoops---->", mpes.events.NumLoops)
 	if mpes.events.Serving != nil {
 		var es EventServer
-		es.NumLoops = numLoops
-		es.Addrs = make([]net.Addr, len(listeners))
+		es.NumLoops = mpes.events.NumLoops
+		es.Addrs = make([]net.Addr, len(mpes.lns))
 		for i, ln := range mpes.lns {
 			es.Addrs[i] = ln.lnaddr
 		}
@@ -198,11 +201,11 @@ func mpServe(events Events, listeners []*listener) error {
 			l.poll.Close()
 		}
 		// do Shutdown action
-		events.Shutdown()
+		mpes.events.Shutdown()
 	}()
 
 	// create loops locally and bind the listeners.
-	for i := 0; i < numLoops; i++ {
+	for i := 0; i < mpes.events.NumLoops; i++ {
 		l := &loop{
 			idx:    i,
 			poll:   internal.OpenPoll(),
