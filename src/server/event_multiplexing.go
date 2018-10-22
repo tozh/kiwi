@@ -22,11 +22,11 @@ func reusePortListen(proto, addr string) (l net.Listener, err error) {
 }
 
 type loop struct {
-	idx    int                 // loop index in the mpEventServer loops list
-	poll   *internal.Poll      // epoll or kqueue
-	buf    []byte              // read packet buffer
-	fdclis map[int] Client /// loop connections fd -> clients
-	count  int32               // connection count
+	idx    int            // loop index in the mpEventServer loops list
+	poll   *internal.Poll // epoll or kqueue
+	buf    []byte         // read packet buffer
+	fdclis map[int]Client // loop connections fd -> clients
+	count  int32          // connection count
 }
 
 type conn struct {
