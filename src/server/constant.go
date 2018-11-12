@@ -1,14 +1,5 @@
 package server
 
-/* constants for linkedlist */
-const ITERATION_DIRECTION_INORDER = 1
-const ITERATION_DIRECTION_REVERSE_ORDER = -1
-
-/* constants for zskiplist */
-const ZSKIPLIST_MAXLEVEL = 64
-const ZSKIPLIST_P = 0.25
-const ZSKIPLIST_RANDOM_MAXLEVEL = 0xFFFF * ZSKIPLIST_P
-
 /* constants for Object */
 const OBJ_ENCODING_STR = 0
 const OBJ_ENCODING_INT = 1
@@ -175,7 +166,7 @@ const CONFIG_DEFAULT_MAXMEMORY = 0
 const CONFIG_DEFAULT_MAX_CLIENTS = 10000
 
 
-//type SharedConst struct {
+//type SharedConst structure {
 //	OBJ_ENCODING_STR byte
 //	OBJ_ENCODING_INT byte
 //	OBJ_ENCODING_HT byte

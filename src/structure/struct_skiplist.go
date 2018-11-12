@@ -1,4 +1,4 @@
-package server
+package structure
 
 import (
 	"math/rand"
@@ -33,7 +33,7 @@ type ZScoreRangeSpec struct {
 
 // Struct to hold an inclusive/exclusive range spec by lexicographic comparison
 
-//type ZLexRangeSpec struct {
+//type ZLexRangeSpec structure {
 //	Min string
 //	Max string
 //	Minex bool
@@ -270,11 +270,11 @@ func (zsl *ZSkiplist) ZSkiplistDeleteRangeByScore(rangeSpec *ZScoreRangeSpec, di
 //
 //	// delete nodes while in range
 //	for x!=nil && ZSkiplistLexValueLteMax(x.Ele, rangeSpec) {
-//		Next := x.Level[0].Forward
+//		next := x.Level[0].Forward
 //		zsl.ZSkiplistDeleteNode(x, update)
 //		delete(dict, x.Ele)
 //		removed++
-//		x = Next
+//		x = next
 //	}
 //	return removed
 //}

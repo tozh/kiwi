@@ -1,6 +1,6 @@
 package server
 //
-//type Op struct {
+//type Op structure {
 //	Argc   int64    // count of arguments
 //	Argv   []string // arguments of current command
 //	DbId   int64
@@ -8,7 +8,7 @@ package server
 //	Cmd    *Command
 //}
 //
-//type OpArray struct {
+//type OpArray structure {
 //	Ops   []*Op
 //	OpNum int64
 //}

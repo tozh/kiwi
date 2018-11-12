@@ -183,7 +183,7 @@ func ServerExists() (int, error) {
 //			MaxMemory:            CONFIG_DEFAULT_MAXMEMORY,
 //			Loading:              false,
 //			LogLevel:             LL_DEBUG,
-//			CloseCh:              make(chan struct{}, 1),
+//			CloseCh:              make(chan structure{}, 1),
 //			mutex:                sync.RWMutex{},
 //			wg:                   sync.WaitGroup{},
 //		}
