@@ -2,6 +2,7 @@ package server
 
 import (
 	"time"
+	"kiwi/src/structure"
 )
 
 type Object struct {
@@ -18,12 +19,12 @@ type IntObject struct {
 
 type ListObject struct {
 	Object
-	Value *List
+	Value *structure.List
 }
 
 type ZSetObject struct {
 	Object
-	Value *ZSkiplist
+	Value *structure.ZSkiplist
 }
 
 type HashObject struct {

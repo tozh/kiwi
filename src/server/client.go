@@ -4,6 +4,7 @@ import (
 	"time"
 	"fmt"
 	"sync/atomic"
+	"kiwi/src/structure"
 )
 
 type KiwiClient struct {
@@ -20,7 +21,7 @@ type KiwiClient struct {
 	CreateTime      time.Time
 	LastInteraction time.Time
 	Flags           int
-	Node            *ListNode
+	Node            *structure.ListNode
 	RequestType     int // Request protocol type: PROTO_REQ_*
 	MultiBulkLen    int // Number of multi bulk arguments left to read.
 	Authenticated   int
@@ -221,14 +222,14 @@ func CreateClient(conn *conn, flags int) (c *KiwiClient, action Action) {
 }
 
 func LinkClient(c *KiwiClient) {
-	kiwiS.Clients.ListAddNodeTail(c)
+	kiwiS.Clients.Append(c)
 	kiwiS.ClientsMap[c.Id] = c
-	c.Node = kiwiS.Clients.ListTail()
+	c.Node = kiwiS.Clients.Right()
 	atomic.AddInt64(&kiwiS.StatConnCount, 1)
 }
 
 func UnLinkClient(c *KiwiClient) {
-	kiwiS.Clients.ListDelNode(c.Node)
+	kiwiS.Clients.RemoveNode(c.Node)
 	c.Node = nil
 	delete(kiwiS.ClientsMap, c.Id)
 	atomic.AddInt64(&kiwiS.StatConnCount, -1)

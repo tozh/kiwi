@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"syscall"
 	"sync/atomic"
+	"kiwi/src/structure"
 )
 
 type accepted struct {
@@ -39,7 +40,7 @@ type Server struct {
 	BindAddrs            []string
 	BindAddrCount        int       // Number of addresses in test_server.bindaddr[]
 	UnixSocketPath       string    // UNIX socket path
-	Clients              *SyncList // List of active clients
+	Clients              *structure.List // List of active clients
 	ClientsMap           map[int64]*KiwiClient
 	ClientMaxQueryBufLen int
 	ClientMaxReplyBufLen int
@@ -260,7 +261,7 @@ func InitServer() {
 	for i := 0; i < kiwiS.DbNum; i++ {
 		kiwiS.Dbs[i] = CreateDb(i)
 	}
-	kiwiS.Clients = CreateSyncList()
+	kiwiS.Clients = structure.ListCreate()
 	kiwiS.BindAddrs = append(kiwiS.BindAddrs, "0.0.0.0")
 	kiwiS.BindAddrCount++
 	CreateShared()
