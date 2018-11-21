@@ -189,7 +189,7 @@ func JoinTest() {
 	list1.Join(list2)
 	idx := 0
 	if list2.Len() != 0 {
-		panic(fmt.Sprintf("Error JoinTest. list2.Left=%v, list2.Right=%v, list2.Len=%d\n", list2.Left, list2.Right, list2.Len()))
+		panic(fmt.Sprintf("Error JoinTest. list2.l=%v, list2.r=%v, list2.Len=%d\n", list2.l, list2.r, list2.Len()))
 	}
 	iter := list1.Iterator(structure.ITERATION_DIRECTION_INORDER)
 	for node := iter.Next(); iter.HasNext(); node = iter.Next() {
@@ -223,7 +223,7 @@ func CopyTest() {
 
 	idx := 0
 	iter := list_copy.Iterator(1)
-	//fmt.Println(iter.Next(), iter.Next())
+	//fmt.Println(iter.next(), iter.next())
 
 	for node := iter.Next(); iter.HasNext(); node = iter.Next() {
 		if idx != *node.Value.(*int) {

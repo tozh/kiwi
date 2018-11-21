@@ -8,8 +8,8 @@ import (
 /* definition of List structure */
 
 type ListNode struct {
-	Prev  *ListNode
-	Next  *ListNode
+	prev  *ListNode
+	next  *ListNode
 	Value interface{}
 }
 
@@ -21,21 +21,21 @@ type ListIterator struct {
 }
 
 func (iter *ListIterator) RewindLeft(list *List) {
-	iter.node = list.Left
+	iter.node = list.l
 	iter.direction = ITERATION_DIRECTION_INORDER
 }
 
 func (iter *ListIterator) RewindRight(list *List) {
-	iter.node = list.Right
+	iter.node = list.r
 	iter.direction = ITERATION_DIRECTION_REVERSE_ORDER
 }
 
 func (iter *ListIterator) Next() (*ListNode) {
-	if iter.direction >=0 {
-		iter.node = iter.node.Next
+	if iter.direction >= 0 {
+		iter.node = iter.node.next
 		return iter.node
 	} else {
-		iter.node = iter.node.Prev
+		iter.node = iter.node.prev
 		return iter.node
 
 	}
@@ -47,27 +47,27 @@ func (iter *ListIterator) HasNext() bool {
 
 /* methods for ListIterator */
 func (list *List) Iterator(direction int) *ListIterator {
-	if direction >=0 {
+	if direction >= 0 {
 		return &ListIterator{
-			list.Left,
+			list.l,
 			direction,
-			list.Left,
-			list.Right,
+			list.l,
+			list.r,
 		}
 	} else {
 		return &ListIterator{
-			list.Right,
+			list.r,
 			direction,
-			list.Right,
-			list.Left,
+			list.r,
+			list.l,
 		}
 	}
 
 }
 
 type List struct {
-	Left      *ListNode
-	Right     *ListNode
+	l         *ListNode
+	r         *ListNode
 	len       int32
 	NodeEqual func(value interface{}, key interface{}) bool
 	lLock     sync.RWMutex
@@ -78,16 +78,24 @@ func (list *List) Len() int32 {
 	return atomic.LoadInt32(&list.len)
 }
 
-func (list *List) LenAdd(n int32) {
+func (list *List) lenAdd(n int32) {
 	atomic.AddInt32(&list.len, n)
 }
 
-func (list *List) LenMinus(n int32) {
+func (list *List) lenMinus(n int32) {
 	atomic.AddInt32(&list.len, -n)
 }
 
-func (list *List) LenSet(n int32) {
+func (list *List) lenSet(n int32) {
 	atomic.StoreInt32(&list.len, n)
+}
+
+func (list *List) Left() *ListNode {
+	return list.l
+}
+
+func (list *List) Right() *ListNode {
+	return list.r
 }
 
 func (list *List) LeftAppend(value interface{}) {
@@ -105,11 +113,11 @@ func (list *List) LeftAppend(value interface{}) {
 		list.lLock.Lock()
 		defer list.lLock.Unlock()
 	}
-	node.Next = list.Left.Next
-	list.Left.Next.Prev = &node
-	node.Prev = list.Left
-	list.Left.Next = &node
-	list.LenAdd(1)
+	node.next = list.l.next
+	list.l.next.prev = &node
+	node.prev = list.l
+	list.l.next = &node
+	list.lenAdd(1)
 }
 
 func (list *List) LeftPop() interface{} {
@@ -126,12 +134,12 @@ func (list *List) LeftPop() interface{} {
 		list.lLock.Lock()
 		defer list.lLock.Unlock()
 	}
-	node = list.Left.Next
-	node.Next.Prev = list.Left
-	list.Left.Next = node.Next
-	node.Next = nil
-	node.Prev = nil
-	list.LenMinus(1)
+	node = list.l.next
+	node.next.prev = list.l
+	list.l.next = node.next
+	node.next = nil
+	node.prev = nil
+	list.lenMinus(1)
 	return node.Value
 
 }
@@ -151,11 +159,11 @@ func (list *List) Append(value interface{}) {
 		list.rLock.Lock()
 		defer list.rLock.Unlock()
 	}
-	node.Prev = list.Right.Prev
-	list.Right.Prev.Next = &node
-	node.Next = list.Right
-	list.Right.Prev = &node
-	list.LenAdd(1)
+	node.prev = list.r.prev
+	list.r.prev.next = &node
+	node.next = list.r
+	list.r.prev = &node
+	list.lenAdd(1)
 }
 
 func (list *List) Pop() interface{} {
@@ -174,12 +182,12 @@ func (list *List) Pop() interface{} {
 		defer list.rLock.Unlock()
 
 	}
-	node = list.Right.Prev
-	node.Prev.Next = list.Right
-	list.Right.Prev = node.Prev
-	node.Next = nil
-	node.Prev = nil
-	list.LenMinus(1)
+	node = list.r.prev
+	node.prev.next = list.r
+	list.r.prev = node.prev
+	node.next = nil
+	node.prev = nil
+	list.lenMinus(1)
 	return node.Value
 
 }
@@ -191,19 +199,19 @@ func (list *List) Clear() {
 	defer list.lLock.Unlock()
 	defer list.rLock.Unlock()
 
-	list.LenSet(0)
-	list.Left = &ListNode{
+	list.lenSet(0)
+	list.l = &ListNode{
 		nil,
 		nil,
 		nil,
 	}
-	list.Right = &ListNode{
+	list.r = &ListNode{
 		nil,
 		nil,
 		nil,
 	}
-	list.Left.Next = list.Right
-	list.Right.Prev = list.Left
+	list.l.next = list.r
+	list.r.prev = list.l
 }
 
 func (list *List) InsertNode(node *ListNode, value interface{}, after bool) {
@@ -218,15 +226,15 @@ func (list *List) InsertNode(node *ListNode, value interface{}, after bool) {
 	defer list.rLock.Unlock()
 
 	if after {
-		newNode.Next = node.Next
-		newNode.Prev = node
-		node.Next = &newNode
+		newNode.next = node.next
+		newNode.prev = node
+		node.next = &newNode
 	} else {
-		newNode.Prev = node.Prev
-		newNode.Next = node
-		node.Prev = &newNode
+		newNode.prev = node.prev
+		newNode.next = node
+		node.prev = &newNode
 	}
-	list.LenAdd(1)
+	list.lenAdd(1)
 }
 
 func (list *List) RemoveNode(node *ListNode) {
@@ -235,15 +243,15 @@ func (list *List) RemoveNode(node *ListNode) {
 	defer list.lLock.Unlock()
 	defer list.rLock.Unlock()
 
-	prev := node.Prev
-	next := node.Next
+	prev := node.prev
+	next := node.next
 
-	prev.Next = next
-	next.Prev = prev
+	prev.next = next
+	next.prev = prev
 
-	node.Prev = nil
-	node.Next = nil
-	list.LenMinus(1)
+	node.prev = nil
+	node.next = nil
+	list.lenMinus(1)
 }
 
 /* Search the list for a node matching a given key.
@@ -253,7 +261,7 @@ func (list *List) RemoveNode(node *ListNode) {
  * compared with the 'key' pointer.
  *
  * On success the first matching node pointer is returned
- * (search starts from Left). If no matching node exists
+ * (search starts from l). If no matching node exists
  * NULL is returned. */
 func (list *List) SearchValue(val interface{}) (node *ListNode, index int) {
 	list.rLock.RLock()
@@ -289,9 +297,9 @@ func (list *List) RSearchValue(val interface{}) (node *ListNode, index int) {
 }
 
 /* Return the element at the specified zero-based index
- * where 0 is the Left, 1 is the element next to Left
+ * where 0 is the l, 1 is the element next to l
  * and so on. Negative integers are used in order to count
- * from the Right, -1 is the last element, -2 the penultimate
+ * from the r, -1 is the last element, -2 the penultimate
  * and so on. If the index is out of range NULL is returned. */
 func (list *List) Index(index int) *ListNode {
 	list.rLock.RLock()
@@ -302,32 +310,32 @@ func (list *List) Index(index int) *ListNode {
 	if index >= 0 && index < int(list.Len()) {
 		if index >= int(list.Len())/2 {
 			idx := int(list.Len()) - 1 - index
-			node = list.Right
+			node = list.r
 			for idx >= 0 {
-				node = node.Prev
+				node = node.prev
 				idx--
 			}
 		} else {
 			idx := index
-			node = list.Left
+			node = list.l
 			for idx >= 0 {
-				node = node.Next
+				node = node.next
 				idx--
 			}
 		}
 	} else if index < 0 && -index <= int(list.Len()) {
 		if -index >= int(list.Len())/2 {
 			idx := int(list.Len()) + index
-			node = list.Left
+			node = list.l
 			for idx >= 0 {
-				node = node.Next
+				node = node.next
 				idx--
 			}
 		} else {
 			idx := -index - 1
-			node = list.Right
+			node = list.r
 			for idx >= 0 {
-				node = node.Prev
+				node = node.prev
 				idx--
 			}
 		}
@@ -346,15 +354,15 @@ func (list *List) RotateLeft() {
 		return
 	}
 
-	l := list.Left.Next
-	r := list.Right.Prev
-	list.Left.Next = l.Next
-	l.Next.Prev = list.Left
+	l := list.l.next
+	r := list.r.prev
+	list.l.next = l.next
+	l.next.prev = list.l
 
-	r.Next = l
-	l.Prev = r
-	l.Next = list.Right
-	list.Right.Prev = l
+	r.next = l
+	l.prev = r
+	l.next = list.r
+	list.r.prev = l
 }
 
 func (list *List) RotateRight() {
@@ -365,22 +373,22 @@ func (list *List) RotateRight() {
 	if list.Len() <= 1 {
 		return
 	}
-	l := list.Left.Next
-	r := list.Right.Prev
-	list.Right.Prev = r.Prev
-	r.Prev.Next = list.Right
+	l := list.l.next
+	r := list.r.prev
+	list.r.prev = r.prev
+	r.prev.next = list.r
 
-	l.Prev = r
-	r.Next = l
-	r.Prev = list.Left
-	list.Left.Next = r
+	l.prev = r
+	r.next = l
+	r.prev = list.l
+	list.l.next = r
 }
 
 func (list *List) LeftFirst() *ListNode {
 	if list.Len() == 0 {
 		return nil
 	} else {
-		return list.Left.Next
+		return list.l.next
 	}
 }
 
@@ -388,7 +396,7 @@ func (list *List) RightFirst() *ListNode {
 	if list.Len() == 0 {
 		return nil
 	} else {
-		return list.Right.Prev
+		return list.r.prev
 	}
 }
 
@@ -399,9 +407,9 @@ func (list *List) Join(other *List) {
 	other.rLock.Lock()
 	other.lLock.Lock()
 
-	list.Right.Prev.Next = other.Left.Next
-	list.Right = other.Right
-	list.LenAdd(other.Len())
+	list.r.prev.next = other.l.next
+	list.r = other.r
+	list.lenAdd(other.Len())
 
 	other.lLock.Unlock()
 	other.rLock.Unlock()
@@ -423,13 +431,12 @@ func ListCopy(list *List) *List {
 
 func ListCreate() *List {
 	list := List{
-		Left: &ListNode{
+		l: &ListNode{
 			nil,
 			nil,
 			nil,
-
 		},
-		Right: &ListNode{
+		r: &ListNode{
 			nil,
 			nil,
 			nil,
@@ -439,7 +446,7 @@ func ListCreate() *List {
 		lLock:     sync.RWMutex{},
 		rLock:     sync.RWMutex{},
 	}
-	list.Left.Next = list.Right
-	list.Right.Prev = list.Left
+	list.l.next = list.r
+	list.r.prev = list.l
 	return &list
 }
