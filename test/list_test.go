@@ -190,7 +190,7 @@ func TestListJoin(t *testing.T) {
 	list1.Join(list2)
 	idx := 0
 	if list2.Len() != 0 {
-		panic(fmt.Sprintf("Error TestListJoin. list2.l=%v, list2.r=%v, list2.Len=%d\n", list2.l, list2.r, list2.Len()))
+		panic(fmt.Sprintf("Error TestListJoin. list2.l=%v, list2.r=%v, list2.Len=%d\n", list2.Left(), list2.Right(), list2.Len()))
 	}
 	iter := list1.Iterator(structure.ITERATION_DIRECTION_INORDER)
 	for node := iter.Next(); iter.HasNext(); node = iter.Next() {
