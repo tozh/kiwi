@@ -1,10 +1,11 @@
 package main
+import "kiwi/test"
 
-import "kiwi/src/server"
 
 func main() {
-	server.InitServer()
-	server.StartServer()
-	server.WaitEventServerClosed()
-	server.CloseServer()
+	//server.InitServer()
+	//server.StartServer()
+	//server.WaitEventServerClosed()
+	//server.CloseServer()
+	test.list_test()
 }

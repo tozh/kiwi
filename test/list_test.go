@@ -6,19 +6,20 @@ import (
 	"sync"
 	"math/rand"
 	"kiwi/src/structure"
+	"testing"
 )
 
-func list_test() {
-	AppendPopTest()
-	SearchTest()
-	IndexTest()
-	RotateTest()
-	JoinTest()
-	CopyTest()
+func TestList(t *testing.T) {
+	TestListAppendPop(t)
+	TestListSearch(t)
+	TestListIndex(t)
+	TestListRotate(t)
+	TestListJoin(t)
+	TestListCopy(t)
 }
 
-func AppendPopTest() {
-	fmt.Println("AppendPopTest start")
+func TestListAppendPop(t *testing.T) {
+	fmt.Println("TestListAppendPop start")
 	t1 := time.Now()
 	list := structure.ListCreate()
 	wg := sync.WaitGroup{}
@@ -57,7 +58,7 @@ func AppendPopTest() {
 	}
 	wg.Wait()
 	fmt.Println(list.Len())
-	fmt.Printf("time is %v\n", time.Since(t1))
+	fmt.Printf("TestListAppendPop time is %v\n", time.Since(t1))
 
 	bucket := [500000]int{}
 	idx := 0
@@ -74,11 +75,11 @@ func AppendPopTest() {
 		}
 	}
 
-	fmt.Println("AppendPopTest finish, count:", count)
+	fmt.Println("TestListAppendPop finish, count:", count)
 	fmt.Println()
 }
-func SearchTest() {
-	fmt.Println("SearchTest start")
+func TestListSearch(t *testing.T) {
+	fmt.Println("TestListSearch start")
 	t1 := time.Now()
 	list := structure.ListCreate()
 	listLen := 10000
@@ -95,16 +96,16 @@ func SearchTest() {
 		node, idx := list.SearchValue(&val)
 		rnode, ridx := list.RSearchValue(&val)
 		if idx+ridx != listLen-1 || node != rnode {
-			panic(fmt.Sprintf("Error Index. idx=%d, ridx=%d, node.val=%d, rnode.val=%d\n", idx, ridx, *node.Value.(*int), *rnode.Value.(*int)))
+			panic(fmt.Sprintf("Error TestListSearch. idx=%d, ridx=%d, node.val=%d, rnode.val=%d\n", idx, ridx, *node.Value.(*int), *rnode.Value.(*int)))
 		}
 	}
 
-	fmt.Printf("SearchValue finish.time is %v\n", time.Since(t1))
+	fmt.Printf("TestListSearch finish.time is %v\n", time.Since(t1))
 	fmt.Println()
 }
 
-func IndexTest() {
-	fmt.Println("IndexTest start")
+func TestListIndex(t *testing.T) {
+	fmt.Println("TestListIndex start")
 	t1 := time.Now()
 	list := structure.ListCreate()
 	listLen := 50000
@@ -120,21 +121,21 @@ func IndexTest() {
 	for i := 0; i < listLen; i++ {
 		node := list.Index(i)
 		if *node.Value.(*int) != i {
-			panic(fmt.Sprintf("Error Index. idx=%d, node.val=%d\n", i, *node.Value.(*int)))
+			panic(fmt.Sprintf("Error TestListIndex. idx=%d, node.val=%d\n", i, *node.Value.(*int)))
 		}
 		ri := i - listLen
 		rnode := list.Index(ri)
 		if *node.Value.(*int) != i {
-			panic(fmt.Sprintf("Error RIndex. idx=%d, node.val=%d\n", i, *rnode.Value.(*int)))
+			panic(fmt.Sprintf("Error TestListIndex. idx=%d, node.val=%d\n", i, *rnode.Value.(*int)))
 		}
 	}
 
-	fmt.Printf("IndexTest finish. time is %v\n", time.Since(t1))
+	fmt.Printf("TestListIndex finish. time is %v\n", time.Since(t1))
 	fmt.Println()
 }
 
-func RotateTest() {
-	fmt.Println("RotateTest start")
+func TestListRotate(t *testing.T) {
+	fmt.Println("TestListRotate start")
 	t1 := time.Now()
 	list := structure.ListCreate()
 	listLen := 5000
@@ -148,7 +149,7 @@ func RotateTest() {
 	}
 	for i := 3*listLen; i >=0; i-- {
 		if i%listLen != *list.LeftFirst().Value.(*int) {
-			panic(fmt.Sprintf("Error RotateRight. val=%d, node.val=%d\n", i%listLen, *list.LeftFirst().Value.(*int)))
+			panic(fmt.Sprintf("Error TestListRotate. val=%d, node.val=%d\n", i%listLen, *list.LeftFirst().Value.(*int)))
 		}
 		list.RotateRight()
 	}
@@ -160,17 +161,17 @@ func RotateTest() {
 
 	for i := 0; i < 3*listLen; i++ {
 		if i%listLen != *list.LeftFirst().Value.(*int) {
-			panic(fmt.Sprintf("Error RotateLeft. val=%d, node.val=%d\n", i%listLen, *list.LeftFirst().Value.(*int)))
+			panic(fmt.Sprintf("Error TestListRotate. val=%d, node.val=%d\n", i%listLen, *list.LeftFirst().Value.(*int)))
 		}
 		list.RotateLeft()
 	}
 
-	fmt.Printf("RotateTest finish. time is %v\n", time.Since(t1))
+	fmt.Printf("TestListRotate finish. time is %v\n", time.Since(t1))
 	fmt.Println()
 }
 
 
-func JoinTest() {
+func TestListJoin(t *testing.T) {
 	fmt.Println("JoinTest start")
 	t1 := time.Now()
 	list1 := structure.ListCreate()
@@ -189,7 +190,7 @@ func JoinTest() {
 	list1.Join(list2)
 	idx := 0
 	if list2.Len() != 0 {
-		panic(fmt.Sprintf("Error JoinTest. list2.l=%v, list2.r=%v, list2.Len=%d\n", list2.l, list2.r, list2.Len()))
+		panic(fmt.Sprintf("Error TestListJoin. list2.l=%v, list2.r=%v, list2.Len=%d\n", list2.l, list2.r, list2.Len()))
 	}
 	iter := list1.Iterator(structure.ITERATION_DIRECTION_INORDER)
 	for node := iter.Next(); iter.HasNext(); node = iter.Next() {
@@ -197,20 +198,20 @@ func JoinTest() {
 			fmt.Println(idx, node.Value)
 		}
 		if idx != *node.Value.(*int) {
-			panic(fmt.Sprintf("Error JoinTest. idx=%d, node.val=%d\n", idx, *node.Value.(*int)))
+			panic(fmt.Sprintf("Error TestListJoin. idx=%d, node.val=%d\n", idx, *node.Value.(*int)))
 		}
 		idx++
 	}
 	if idx != int(list1.Len()) || list1.Len() != l1len+l2len {
-		panic(fmt.Sprintf("Error JoinTest. idx=%d, list1.Len()=%d, l1len=%d, l2len=%d\n", idx, list1.Len(), l1len, l2len))
+		panic(fmt.Sprintf("Error TestListJoin. idx=%d, list1.Len()=%d, l1len=%d, l2len=%d\n", idx, list1.Len(), l1len, l2len))
 	}
 
 
-	fmt.Printf("RotateTest finish. time is %v\n", time.Since(t1))
+	fmt.Printf("TestListJoin finish. time is %v\n", time.Since(t1))
 	fmt.Println()
 }
 
-func CopyTest() {
+func TestListCopy(t *testing.T) {
 	fmt.Println("CopyTest start")
 	t1 := time.Now()
 	list := structure.ListCreate()
@@ -227,12 +228,12 @@ func CopyTest() {
 
 	for node := iter.Next(); iter.HasNext(); node = iter.Next() {
 		if idx != *node.Value.(*int) {
-			panic(fmt.Sprintf("CopyTest Error, idx=%d, node.val=%d\n", idx, *node.Value.(*int)))
+			panic(fmt.Sprintf("TestListCopy Error, idx=%d, node.val=%d\n", idx, *node.Value.(*int)))
 		}
 		idx++
 	}
 
 
-	fmt.Printf("CopyTest finish. time is %v\n", time.Since(t1))
+	fmt.Printf("TestListCopy finish. time is %v\n", time.Since(t1))
 	fmt.Println()
 }
