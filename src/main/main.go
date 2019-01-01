@@ -1,5 +1,4 @@
 package main
-import "kiwi/test"
 
 
 func main() {
@@ -7,5 +6,4 @@ func main() {
 	//server.StartServer()
 	//server.WaitEventServerClosed()
 	//server.CloseServer()
-	test.list_test()
 }
