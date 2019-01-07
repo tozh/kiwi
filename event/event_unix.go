@@ -220,9 +220,8 @@ func Serve(es *EventServer) error {
 
 	fmt.Println("numLoops---->", es.events.NumLoops)
 	if es.events.Serving != nil {
-		var s server.Server
-		s.NumLoops = es.events.NumLoops
-		s.Addrs = make([]net.Addr, len(es.lns))
+		es.NumLoops = es.events.NumLoops
+		es.Addrs = make([]net.Addr, len(es.lns))
 		for i, ln := range es.lns {
 			es.Addrs[i] = ln.lnaddr
 		}
@@ -284,7 +283,7 @@ func Serve(es *EventServer) error {
 }
 
 func loopCloseConn(es *EventServer, l *loop, c Client, err error) error {
-	conn := c.GetConn()
+	conn := c.GetConn().(*conn)
 	atomic.AddInt32(&l.count, -1)
 	delete(l.fdclis, conn.fd)
 	syscall.Close(conn.fd)
@@ -299,7 +298,7 @@ func loopCloseConn(es *EventServer, l *loop, c Client, err error) error {
 }
 
 func loopDetachConn(es *EventServer, l *loop, c Client, err error) error {
-	conn := c.GetConn()
+	conn := c.GetConn().(*conn)
 	if es.events.Detached == nil {
 		return loopCloseConn(es, l, c, err)
 	}
@@ -363,11 +362,11 @@ func loopRun(es *EventServer, l *loop) {
 		switch {
 		case c == nil:
 			return loopAccept(es, l, fd)
-		case !c.GetConn().opened:
+		case !c.GetConn().(*conn).opened:
 			return loopOpened(es, l, c)
-		case len(c.GetConn().out) > 0:
+		case len(c.GetConn().(*conn).out) > 0:
 			return loopWrite(es, l, c)
-		case c.GetConn().action != None:
+		case c.GetConn().(*conn).action != None:
 			return loopAction(es, l, c)
 		default:
 			return loopRead(es, l, c)
@@ -410,7 +409,7 @@ func loopAccept(es *EventServer, l *loop, fd int) error {
 			conn := &conn{fd: nfd, sa: sa, lnidx: i}
 			flag := 0
 			if ln.network == "unix" {
-				flag |= CLIENT_UNIX_SOCKET
+				flag |= server.CLIENT_UNIX_SOCKET
 			}
 			l.poll.AddReadWrite(conn.fd)
 			c, action := es.events.Accepted(conn, flag)
@@ -427,7 +426,7 @@ func loopAccept(es *EventServer, l *loop, fd int) error {
 }
 
 func loopOpened(es *EventServer, l *loop, c Client) error {
-	conn := c.GetConn()
+	conn := c.GetConn().(*conn)
 	conn.opened = true
 	conn.addrIndex = conn.lnidx
 	conn.remoteAddr = internal.SockaddrToAddr(conn.sa)
@@ -451,7 +450,7 @@ func loopOpened(es *EventServer, l *loop, c Client) error {
 }
 
 func loopAction(es *EventServer, l *loop, c Client) error {
-	conn := c.GetConn()
+	conn := c.GetConn().(*conn)
 	switch conn.action {
 	default:
 		conn.action = None
@@ -469,7 +468,7 @@ func loopAction(es *EventServer, l *loop, c Client) error {
 }
 
 func loopRead(es *EventServer, l *loop, c Client) error {
-	conn := c.GetConn()
+	conn := c.GetConn().(*conn)
 	var in []byte
 	n, err := syscall.Read(conn.fd, l.buf)
 	if n == 0 || err != nil {
@@ -496,7 +495,7 @@ func loopRead(es *EventServer, l *loop, c Client) error {
 }
 
 func loopWrite(es *EventServer, l *loop, c Client) error {
-	conn := c.GetConn()
+	conn := c.GetConn().(*conn)
 	if es.events.PreWrite != nil {
 		es.events.PreWrite()
 	}
