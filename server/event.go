@@ -6,31 +6,32 @@ import (
 	"strings"
 	"strconv"
 	"time"
+	"github.com/zhaotong0312/kiwi/event"
 )
 
-func CreateKiwiServerEvents() (events Events) {
-	events = Events{
+func CreateKiwiServerEvents() (events event.Events) {
+	events = event.Events{
 		NumLoops: kiwiS.numLoops,
 	}
-	events.Accepted = func(conn *conn, flags int) (c Client, action Action) {
+	events.Accepted = func(conn event.Conn, flags int) (c event.Client, action event.Action) {
 		return CreateClient(conn, flags)
 	}
 
-	events.Opened = func(c Client) (out []byte, opts Options, action Action) {
+	events.Opened = func(c event.Client) (out []byte, opts event.Options, action event.Action) {
 		// fmt.Println("Opened")
 		if kiwiS.StatConnCount > kiwiS.MaxClients {
 			out = append([]byte{}, "-ERROR exceeds the maximum number of clients.\r\n"...)
-			action = Close
+			action = event.Close
 		}
 		return
 	}
-	events.Closed = func(c Client, err error) (action Action) {
+	events.Closed = func(c event.Client, err error) (action event.Action) {
 		cli := c.(*KiwiClient)
 		CloseClient(cli)
 		// fmt.Println("Closed")
 		return
 	}
-	events.Data = func(c Client, in []byte) (out []byte, action Action) {
+	events.Data = func(c event.Client, in []byte) (out []byte, action event.Action) {
 		cli := c.(*KiwiClient)
 		// fmt.Println("Data---->", string(in))
 		if len(in) > 0 {
@@ -44,7 +45,7 @@ func CreateKiwiServerEvents() (events Events) {
 		// fmt.Println("Data---->", string(out))
 		return
 	}
-	events.Written = func(c Client, n int) (action Action) {
+	events.Written = func(c event.Client, n int) (action event.Action) {
 		cli := c.(*KiwiClient)
 		// fmt.Println("Written")
 		atomic.AddInt64(&kiwiS.StatNetOutputBytes, int64(n))
@@ -55,9 +56,9 @@ func CreateKiwiServerEvents() (events Events) {
 		fmt.Println("Shutdown Action...Funished")
 		return
 	}
-	events.Tick = func() (delay time.Duration, action Action) {
+	events.Tick = func() (delay time.Duration, action event.Action) {
 		atomic.AddInt64(&kiwiS.CronLoopCount, 1)
-		return time.Millisecond * time.Duration(1000/kiwiS.Hz), None
+		return time.Millisecond * time.Duration(1000/kiwiS.Hz), event.None
 	}
 	return
 }

@@ -4,12 +4,13 @@ import (
 	"time"
 	"fmt"
 	"sync/atomic"
-	"kiwi/src/structure"
+	"github.com/zhaotong0312/kiwi/structure"
+	"github.com/zhaotong0312/kiwi/event"
 )
 
 type KiwiClient struct {
 	Id              int64
-	Conn            *conn
+	Conn            event.Conn
 	Db              *Db
 	Name            string
 	PeerId          string
@@ -28,7 +29,7 @@ type KiwiClient struct {
 	QueryCount      int
 }
 
-func (c *KiwiClient) GetConn() *conn {
+func (c *KiwiClient) GetConn() event.Conn {
 	return c.Conn
 }
 
@@ -196,7 +197,7 @@ func CatClientInfoString(c *KiwiClient) string {
 		kiwiS.UnixTime.Sub(c.LastInteraction).Nanoseconds()/1000, flags.String(), c.Db.id, cmd)
 }
 
-func CreateClient(conn *conn, flags int) (c *KiwiClient, action Action) {
+func CreateClient(conn event.Conn, flags int) (c *KiwiClient, action event.Action) {
 	createTime := kiwiS.UnixTime
 	c = &KiwiClient{
 		Id:              0,
@@ -218,7 +219,7 @@ func CreateClient(conn *conn, flags int) (c *KiwiClient, action Action) {
 	c.GetNextClientId()
 	SelectDB(c, 0)
 	LinkClient(c)
-	return c, None
+	return c, event.None
 }
 
 func LinkClient(c *KiwiClient) {

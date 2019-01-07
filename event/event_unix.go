@@ -1,18 +1,20 @@
-package server
+package event
 
 import (
-	"syscall"
-	"net"
-	"sync"
-	"time"
-	"kiwi/src/server/event_internal"
-	"sync/atomic"
 	"errors"
-	"os"
-	"github.com/kavu/go_reuseport"
-	"runtime"
 	"fmt"
+	"github.com/kavu/go_reuseport"
+	"github.com/zhaotong0312/kiwi/event/event_internal"
+	"github.com/zhaotong0312/kiwi/server"
+	"net"
+	"os"
+	"runtime"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
 )
+
 
 var errClosing = errors.New("closing")
 //var errCloseConns = errors.New("close conns")
@@ -22,26 +24,27 @@ func reusePortListen(proto, addr string) (l net.Listener, err error) {
 }
 
 type loop struct {
-	idx    int            // loop index in the mpEventServer loops list
+	idx    int            // loop index in the EventServer loops list
 	poll   *internal.Poll // epoll or kqueue
 	buf    []byte         // read packet buffer
 	fdclis map[int]Client // loop connections fd -> clients
 	count  int32          // connection count
 }
 
+
 type conn struct {
 	fd         int              // file descriptor
-	lnidx      int              // listener index in the mpEventServer lns list
-	loopidx    int              // owner loop
+	lnidx      int              // listener index in the server lns list
 	out        []byte           // write buffer
 	sa         syscall.Sockaddr // remote socket address
 	reuse      bool             // should reuse input buffer
-	opened     bool             // connection opened evio fired
+	opened     bool             // connection opened event fired
 	action     Action           // next user action
 	ctx        interface{}      // user-defined context
-	addrIndex  int
-	localAddr  net.Addr
-	remoteAddr net.Addr
+	addrIndex  int              // index of listening address
+	localAddr  net.Addr         // local addre
+	remoteAddr net.Addr         // remote addr
+	loop       *loop            // connected loop
 }
 
 func (c *conn) Context() interface{}       { return c.ctx }
@@ -49,6 +52,11 @@ func (c *conn) SetContext(ctx interface{}) { c.ctx = ctx }
 func (c *conn) AddrIndex() int             { return c.addrIndex }
 func (c *conn) LocalAddr() net.Addr        { return c.localAddr }
 func (c *conn) RemoteAddr() net.Addr       { return c.remoteAddr }
+func (c *conn) Wake() {
+	if c.loop != nil {
+		c.loop.poll.Trigger(c)
+	}
+}
 
 type detachedConn struct {
 	fd int
@@ -124,7 +132,13 @@ func (ln *listener) system() error {
 }
 
 // EventServer implemented based on multiplexing of unix system
-type mpEventServer struct {
+type EventServer struct {
+	// The addrs parameter is an array of listening addresses that align
+	// with the addr strings passed to the Serve function.
+	Addrs []net.Addr
+	// NumLoops is the number of loops that the server is using.
+	NumLoops int
+
 	events   Events             // user events
 	loops    []*loop            // all the loops
 	lns      []*listener        // all the listeners
@@ -136,20 +150,56 @@ type mpEventServer struct {
 }
 
 // waitForShutdown waits for a signal to shutdown
-func (mpes *mpEventServer) waitForShutdown() {
-	mpes.cond.L.Lock()
-	mpes.cond.Wait()
-	mpes.cond.L.Unlock()
+func (es *EventServer) waitForShutdown() {
+	es.cond.L.Lock()
+	es.cond.Wait()
+	es.cond.L.Unlock()
 }
 
-// signalShutdown signals a shutdown an begins mpEventServer closing
-func (mpes *mpEventServer) signalShutdown() {
-	mpes.cond.L.Lock()
-	mpes.cond.Signal()
-	mpes.cond.L.Unlock()
+// signalShutdown signals a shutdown an begins EventServer closing
+func (es *EventServer) signalShutdown() {
+	es.cond.L.Lock()
+	es.cond.Signal()
+	es.cond.L.Unlock()
 }
 
-func createMpServer(events Events, listeners []*listener) *mpEventServer {
+// Serve starts handling events for the specified addresses.
+//
+// Addresses should use a scheme prefix and be formatted
+// like `tcp://192.168.0.10:9851` or `unix://socket`.
+// Valid network schemes:
+//  tcp   - bind to both IPv4 and IPv6
+//  tcp4  - IPv4
+//  tcp6  - IPv6
+//  unix  - Unix Domain Socket
+//
+// The "tcp" network scheme is assumed when one is not specified.
+func CreateEventServer(events Events, addrs ...string) (*EventServer, error) {
+
+	var lns []*listener
+	for _, addr := range addrs {
+		var ln listener
+		ln.network, ln.addr, ln.opts = parseAddr(addr)
+		if ln.network == "unix" {
+			os.RemoveAll(ln.addr)
+		}
+		var err error
+		if ln.opts.reusePort {
+			// if reuse ports
+			ln.ln, err = reusePortListen(ln.network, ln.addr)
+		} else {
+			ln.ln, err = net.Listen(ln.network, ln.addr)
+		}
+		if err != nil {
+			return nil, err
+		}
+		ln.lnaddr = ln.ln.Addr()
+		if err := ln.system(); err != nil {
+			return nil, err
+		}
+		lns = append(lns, &ln)
+	}
+
 	if events.NumLoops <= 0 {
 		if events.NumLoops == 0 {
 			events.NumLoops = 1
@@ -157,25 +207,26 @@ func createMpServer(events Events, listeners []*listener) *mpEventServer {
 			events.NumLoops = runtime.NumCPU()
 		}
 	}
-	mpes := &mpEventServer{}
-	mpes.events = events
-	mpes.lns = listeners
-	mpes.cond = sync.NewCond(&sync.Mutex{})
-	mpes.balance = events.LoadBalance
-	mpes.tch = make(chan time.Duration)
-	return mpes
+	es := &EventServer{}
+	es.events = events
+	es.lns = lns
+	es.cond = sync.NewCond(&sync.Mutex{})
+	es.balance = events.LoadBalance
+	es.tch = make(chan time.Duration)
+	return es, nil
 }
 
-func mpServe(mpes *mpEventServer) error {
-	fmt.Println("numLoops---->", mpes.events.NumLoops)
-	if mpes.events.Serving != nil {
-		var es EventServer
-		es.NumLoops = mpes.events.NumLoops
-		es.Addrs = make([]net.Addr, len(mpes.lns))
-		for i, ln := range mpes.lns {
+func Serve(es *EventServer) error {
+
+	fmt.Println("numLoops---->", es.events.NumLoops)
+	if es.events.Serving != nil {
+		var s server.Server
+		s.NumLoops = es.events.NumLoops
+		s.Addrs = make([]net.Addr, len(es.lns))
+		for i, ln := range es.lns {
 			es.Addrs[i] = ln.lnaddr
 		}
-		action := mpes.events.Serving(es)
+		action := es.events.Serving(es)
 		switch action {
 		case None:
 		case Shutdown:
@@ -184,54 +235,61 @@ func mpServe(mpes *mpEventServer) error {
 	}
 
 	defer func() {
+		for _, ln := range es.lns {
+			fmt.Println("Closing Listeners at", ln.addr, "... Finished.")
+			ln.close()
+		}
+	}()
+
+	defer func() {
 		// wait on a signal for shutdown
-		mpes.waitForShutdown()
+		es.waitForShutdown()
 		// notify all loops to close by closing all listeners
-		for _, l := range mpes.loops {
+		for _, l := range es.loops {
 			l.poll.Trigger(errClosing)
 		}
 		// wait on all loops to complete reading events
-		mpes.wg.Wait()
+		es.wg.Wait()
 
 		// close loops and all outstanding connections
-		for _, l := range mpes.loops {
+		for _, l := range es.loops {
 			for _, c := range l.fdclis {
-				loopCloseConn(mpes, l, c, nil)
+				loopCloseConn(es, l, c, nil)
 			}
 			l.poll.Close()
 		}
 		// do Shutdown action
-		mpes.events.Shutdown()
+		es.events.Shutdown()
 	}()
 
 	// create loops locally and bind the listeners.
-	for i := 0; i < mpes.events.NumLoops; i++ {
+	for i := 0; i < es.events.NumLoops; i++ {
 		l := &loop{
 			idx:    i,
 			poll:   internal.OpenPoll(),
 			buf:    make([]byte, 0xFFFF),
 			fdclis: make(map[int]Client),
 		}
-		for _, ln := range mpes.lns {
+		for _, ln := range es.lns {
 			l.poll.AddRead(ln.fd)
 		}
-		mpes.loops = append(mpes.loops, l)
+		es.loops = append(es.loops, l)
 	}
 	// start loops in background
-	mpes.wg.Add(len(mpes.loops))
-	for _, l := range mpes.loops {
-		go loopRun(mpes, l)
+	es.wg.Add(len(es.loops))
+	for _, l := range es.loops {
+		go loopRun(es, l)
 	}
 	return nil
 }
 
-func loopCloseConn(mpes *mpEventServer, l *loop, c Client, err error) error {
+func loopCloseConn(es *EventServer, l *loop, c Client, err error) error {
 	conn := c.GetConn()
 	atomic.AddInt32(&l.count, -1)
 	delete(l.fdclis, conn.fd)
 	syscall.Close(conn.fd)
-	if mpes.events.Closed != nil {
-		switch mpes.events.Closed(c, err) {
+	if es.events.Closed != nil {
+		switch es.events.Closed(c, err) {
 		case None:
 		case Shutdown:
 			return errClosing
@@ -240,10 +298,10 @@ func loopCloseConn(mpes *mpEventServer, l *loop, c Client, err error) error {
 	return nil
 }
 
-func loopDetachConn(mpes *mpEventServer, l *loop, c Client, err error) error {
+func loopDetachConn(es *EventServer, l *loop, c Client, err error) error {
 	conn := c.GetConn()
-	if mpes.events.Detached == nil {
-		return loopCloseConn(mpes, l, c, err)
+	if es.events.Detached == nil {
+		return loopCloseConn(es, l, c, err)
 	}
 	l.poll.ModDetach(conn.fd)
 	atomic.AddInt32(&l.count, -1)
@@ -251,7 +309,7 @@ func loopDetachConn(mpes *mpEventServer, l *loop, c Client, err error) error {
 	if err := syscall.SetNonblock(conn.fd, false); err != nil {
 		return err
 	}
-	switch mpes.events.Detached(c, &detachedConn{fd: conn.fd}) {
+	switch es.events.Detached(c, &detachedConn{fd: conn.fd}) {
 	case None:
 	case Shutdown:
 		return errClosing
@@ -259,73 +317,73 @@ func loopDetachConn(mpes *mpEventServer, l *loop, c Client, err error) error {
 	return nil
 }
 
-func loopNote(mpes *mpEventServer, l *loop, note interface{}) error {
+func loopNote(es *EventServer, l *loop, note interface{}) error {
 	var err error
 	switch v := note.(type) {
 	case time.Duration:
-		delay, action := mpes.events.Tick()
+		delay, action := es.events.Tick()
 		switch action {
 		case None:
 		case Shutdown:
 			err = errClosing
 		}
-		mpes.tch <- delay
+		es.tch <- delay
 	case error: // shutdown
 		err = v
 	}
 	return err
 }
 
-func loopTicker(mpes *mpEventServer, l *loop) {
+func loopTicker(es *EventServer, l *loop) {
 	for {
 		if err := l.poll.Trigger(time.Duration(0)); err != nil {
 			break
 		}
-		time.Sleep(<-mpes.tch)
+		time.Sleep(<-es.tch)
 	}
 }
 
-func loopRun(mpes *mpEventServer, l *loop) {
+func loopRun(es *EventServer, l *loop) {
 	defer func() {
 		//fmt.Println("-- loop stopped --", l.idx)
-		mpes.signalShutdown()
-		mpes.wg.Done()
+		es.signalShutdown()
+		es.wg.Done()
 	}()
 
-	if l.idx == 0 && mpes.events.Tick != nil {
-		go loopTicker(mpes, l)
+	if l.idx == 0 && es.events.Tick != nil {
+		go loopTicker(es, l)
 	}
 
 	//fmt.Println("-- loop started --", l.idx)
 	l.poll.Wait(func(fd int, note interface{}) error {
 		if fd == 0 {
-			return loopNote(mpes, l, note)
+			return loopNote(es, l, note)
 		}
 		c := l.fdclis[fd]
 		switch {
 		case c == nil:
-			return loopAccept(mpes, l, fd)
+			return loopAccept(es, l, fd)
 		case !c.GetConn().opened:
-			return loopOpened(mpes, l, c)
+			return loopOpened(es, l, c)
 		case len(c.GetConn().out) > 0:
-			return loopWrite(mpes, l, c)
+			return loopWrite(es, l, c)
 		case c.GetConn().action != None:
-			return loopAction(mpes, l, c)
+			return loopAction(es, l, c)
 		default:
-			return loopRead(mpes, l, c)
+			return loopRead(es, l, c)
 		}
 	})
 }
 
-func loopAccept(mpes *mpEventServer, l *loop, fd int) error {
+func loopAccept(es *EventServer, l *loop, fd int) error {
 	//fmt.Println("loopAccept")
-	for i, ln := range mpes.lns {
+	for i, ln := range es.lns {
 		if ln.fd == fd {
-			if len(mpes.loops) > 1 {
-				switch mpes.balance {
+			if len(es.loops) > 1 {
+				switch es.balance {
 				case LeastConnections:
 					n := atomic.LoadInt32(&l.count)
-					for _, lp := range mpes.loops {
+					for _, lp := range es.loops {
 						if lp.idx != l.idx {
 							if atomic.LoadInt32(&lp.count) < n {
 								return nil // do not accept
@@ -333,10 +391,10 @@ func loopAccept(mpes *mpEventServer, l *loop, fd int) error {
 						}
 					}
 				case RoundRobin:
-					if int(atomic.LoadUintptr(&mpes.accepted))%len(mpes.loops) != l.idx {
+					if int(atomic.LoadUintptr(&es.accepted))%len(es.loops) != l.idx {
 						return nil // do not accept
 					}
-					atomic.AddUintptr(&mpes.accepted, 1)
+					atomic.AddUintptr(&es.accepted, 1)
 				}
 			}
 			nfd, sa, err := syscall.Accept(fd)
@@ -355,7 +413,7 @@ func loopAccept(mpes *mpEventServer, l *loop, fd int) error {
 				flag |= CLIENT_UNIX_SOCKET
 			}
 			l.poll.AddReadWrite(conn.fd)
-			c, action := mpes.events.Accepted(conn, flag)
+			c, action := es.events.Accepted(conn, flag)
 			if c == nil || action != None {
 				return err
 				conn.action = action
@@ -368,20 +426,20 @@ func loopAccept(mpes *mpEventServer, l *loop, fd int) error {
 	return nil
 }
 
-func loopOpened(mpes *mpEventServer, l *loop, c Client) error {
+func loopOpened(es *EventServer, l *loop, c Client) error {
 	conn := c.GetConn()
 	conn.opened = true
 	conn.addrIndex = conn.lnidx
 	conn.remoteAddr = internal.SockaddrToAddr(conn.sa)
-	if mpes.events.Opened != nil {
-		out, opts, action := mpes.events.Opened(c)
+	if es.events.Opened != nil {
+		out, opts, action := es.events.Opened(c)
 		if len(out) > 0 {
 			conn.out = append([]byte{}, out...)
 		}
 		conn.action = action
 		conn.reuse = opts.ReuseInputBuffer
 		if opts.TCPKeepAlive > 0 {
-			if _, ok := mpes.lns[conn.lnidx].ln.(*net.TCPListener); ok {
+			if _, ok := es.lns[conn.lnidx].ln.(*net.TCPListener); ok {
 				internal.SetKeepAlive(conn.fd, int(opts.TCPKeepAlive/time.Second))
 			}
 		}
@@ -392,17 +450,17 @@ func loopOpened(mpes *mpEventServer, l *loop, c Client) error {
 	return nil
 }
 
-func loopAction(mpes *mpEventServer, l *loop, c Client) error {
+func loopAction(es *EventServer, l *loop, c Client) error {
 	conn := c.GetConn()
 	switch conn.action {
 	default:
 		conn.action = None
 	case Close:
-		return loopCloseConn(mpes, l, c, nil)
+		return loopCloseConn(es, l, c, nil)
 	case Shutdown:
 		return errClosing
 	case Detach:
-		return loopDetachConn(mpes, l, c, nil)
+		return loopDetachConn(es, l, c, nil)
 	}
 	if len(conn.out) == 0 && conn.action == None {
 		l.poll.ModRead(conn.fd)
@@ -410,7 +468,7 @@ func loopAction(mpes *mpEventServer, l *loop, c Client) error {
 	return nil
 }
 
-func loopRead(mpes *mpEventServer, l *loop, c Client) error {
+func loopRead(es *EventServer, l *loop, c Client) error {
 	conn := c.GetConn()
 	var in []byte
 	n, err := syscall.Read(conn.fd, l.buf)
@@ -418,14 +476,14 @@ func loopRead(mpes *mpEventServer, l *loop, c Client) error {
 		if err == syscall.EAGAIN {
 			return nil
 		}
-		return loopCloseConn(mpes, l, c, err)
+		return loopCloseConn(es, l, c, err)
 	}
 	in = l.buf[:n]
 	if !conn.reuse {
 		in = append([]byte{}, in...)
 	}
-	if mpes.events.Data != nil {
-		out, action := mpes.events.Data(c, in)
+	if es.events.Data != nil {
+		out, action := es.events.Data(c, in)
 		conn.action = action
 		if len(out) > 0 {
 			conn.out = append([]byte{}, out...)
@@ -437,25 +495,25 @@ func loopRead(mpes *mpEventServer, l *loop, c Client) error {
 	return nil
 }
 
-func loopWrite(mpes *mpEventServer, l *loop, c Client) error {
+func loopWrite(es *EventServer, l *loop, c Client) error {
 	conn := c.GetConn()
-	if mpes.events.PreWrite != nil {
-		mpes.events.PreWrite()
+	if es.events.PreWrite != nil {
+		es.events.PreWrite()
 	}
 	n, err := syscall.Write(conn.fd, conn.out)
 	if err != nil {
 		if err == syscall.EAGAIN {
 			return nil
 		}
-		return loopCloseConn(mpes, l, c, err)
+		return loopCloseConn(es, l, c, err)
 	}
 	if n == len(conn.out) {
 		conn.out = nil
 	} else {
 		conn.out = conn.out[n:]
 	}
-	if mpes.events.Written != nil {
-		conn.action = mpes.events.Written(c, n)
+	if es.events.Written != nil {
+		conn.action = es.events.Written(c, n)
 	}
 	if len(conn.out) == 0 && conn.action == None {
 		l.poll.ModRead(conn.fd)
